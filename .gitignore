@@ -1,0 +1,8 @@
+.DS_Store
+# never commit credentials, recordings or exports
+*.env
+env
+*.transcript*
+*.m4a
+*.mp3
+*.wav

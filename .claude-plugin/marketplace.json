@@ -1,0 +1,24 @@
+{
+  "name": "bronzgreen",
+  "description": "BronzGreen's internal Claude Code plugins (private)",
+  "owner": {
+    "name": "BronzGreen"
+  },
+  "plugins": [
+    {
+      "name": "ai-dev-team",
+      "source": {
+        "source": "git-subdir",
+        "url": "BronzGreen/AI-Dev-Team",
+        "path": "plugin",
+        "ref": "v2.42.0"
+      },
+      "description": "AI Dev Team framework: 35 agents (ai-dev-team:<id>) and the framework skills"
+    },
+    {
+      "name": "plaud-kit",
+      "source": "./plugins/plaud-kit",
+      "description": "Plaud recordings \u2192 BRIDGE board cards, meeting digests and doc checks"
+    }
+  ]
+}

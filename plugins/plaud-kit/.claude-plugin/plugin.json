@@ -1,0 +1,7 @@
+{
+  "name": "plaud-kit",
+  "displayName": "Plaud kit",
+  "description": "Plaud recordings → BRIDGE board cards, meeting digests and doc checks. Read-only Plaud access via each user's own Plaud login.",
+  "version": "0.1.0",
+  "author": { "name": "BronzGreen" }
+}
