@@ -9,7 +9,7 @@
       "name": "ai-dev-team",
       "source": {
         "source": "git-subdir",
-        "url": "BronzGreen/AI-Dev-Team",
+        "url": "https://github.com/BronzGreen/AI-Dev-Team.git",
         "path": "plugin",
         "ref": "v2.42.0"
       },

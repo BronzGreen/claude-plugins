@@ -10,27 +10,53 @@ this repository can install from it.
 
 ## Install (once per machine)
 
-1. GitHub access without prompts (the install runs `git` non-interactively):
-   ```bash
-   gh auth login && gh auth setup-git
+Claude Code clones this repository and `BronzGreen/AI-Dev-Team` with `git`, without
+prompts, so your GitHub login has to be stored before you start. Everything goes over HTTPS;
+you don't need an SSH key and you don't need a `git config url.…insteadOf` rewrite.
+
+1. Install the GitHub CLI (`brew install gh` on macOS, `winget install GitHub.cli` on Windows),
+   then log in and let git use that login. Run the two commands one at a time (Windows
+   PowerShell 5 doesn't understand `&&`):
    ```
-   No SSH key on GitHub? Also set `export CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` in your shell
-   profile, otherwise the install tries SSH and fails with "Could not read from remote repository".
-2. In Claude Code:
+   gh auth login
+   gh auth setup-git
+   ```
+2. Tell Claude Code to clone over HTTPS instead of trying SSH first, then **restart your
+   terminal** so the variable is picked up.
+
+   macOS / Linux (zsh or bash):
+   ```bash
+   echo 'export CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1' >> ~/.zshrc   # or ~/.bashrc
+   ```
+   Windows (PowerShell or cmd):
+   ```powershell
+   setx CLAUDE_CODE_PLUGIN_PREFER_HTTPS 1
+   ```
+   Without it, a machine with any SSH setup for github.com tries SSH and can fail with
+   "Could not read from remote repository". If you earlier added the workaround
+   `git config --global url."https://github.com/".insteadOf "git@github.com:"`, you can leave
+   it or remove it with `git config --global --unset url."https://github.com/".insteadOf`.
+3. In Claude Code:
    ```
    /plugin marketplace add BronzGreen/claude-plugins
    /plugin install ai-dev-team@bronzgreen
    /plugin install plaud-kit@bronzgreen
    ```
-   Opening the BRIDGE repo does step 2 for you: its `.claude/settings.json` registers
+   Opening the BRIDGE repo does step 3 for you: its `.claude/settings.json` registers
    this marketplace and enables both plugins after you trust the folder.
-3. Updates: `/plugin` → Marketplaces → `bronzgreen` → **Enable auto-update**, or run
+4. Updates: `/plugin` → Marketplaces → `bronzgreen` → **Enable auto-update**, or run
    `/plugin marketplace update bronzgreen` now and then.
 
 **Migrating from the old symlinks** (BRIDGE): remove the hand-made links, otherwise every
-agent shows up twice:
+agent shows up twice.
+
+macOS / Linux:
 ```bash
 find .claude/agents -type l -lname '*/.ai/.claude/agents/*' -delete
+```
+Windows (PowerShell, in the BRIDGE folder):
+```powershell
+Get-ChildItem .claude\agents | Where-Object { $_.LinkType -and "$($_.Target)" -match '[\\/]\.ai[\\/]\.claude[\\/]agents' } | Remove-Item
 ```
 
 ## plaud-kit setup
@@ -65,8 +91,9 @@ https://bridge.bronzgreen.com, open the browser DevTools console and run:
 })();
 ```
 
-The token is shown once. Store it (never in a repo):
+The token is shown once. Store it (never in a repo).
 
+macOS / Linux:
 ```bash
 mkdir -p ~/.config/plaud-kit
 cat > ~/.config/plaud-kit/env <<'EOF'
@@ -78,8 +105,20 @@ BRIDGE_INBOX_COLUMN_ID=69f8acc8fd4cf9998111c96c
 EOF
 chmod 600 ~/.config/plaud-kit/env
 ```
+Windows (PowerShell) — same file, under your user folder:
+```powershell
+New-Item -ItemType Directory -Force "$HOME\.config\plaud-kit" | Out-Null
+@"
+BRIDGE_PAT=bgp_paste_here
+BRIDGE_API_BASE=https://bridge.bronzgreen.com
+BRIDGE_PROJECT_ID=69f8acbcfd4cf9998111c966
+BRIDGE_BOARD_ID=69f8acc8fd4cf9998111c96b
+BRIDGE_INBOX_COLUMN_ID=69f8acc8fd4cf9998111c96c
+"@ | Set-Content -Encoding ascii "$HOME\.config\plaud-kit\env"
+```
 
-Needs `jq` and `curl` (`brew install jq`).
+Needs `jq` and `curl` (`brew install jq`; on Windows `winget install jqlang.jq` — `curl`
+ships with Windows and Git for Windows).
 
 ### 3. Use it
 ```
@@ -104,6 +143,9 @@ Optional daily digest from cron/launchd: `claude -p "/plaud-kit:plaud-digest tod
 ## Maintaining
 
 - `claude plugin validate .` before every push.
+- Write every git-based plugin source as a full `https://github.com/…git` URL, never the
+  `owner/repo` shorthand: the shorthand makes Claude Code try SSH first, which breaks
+  installs on machines without a GitHub SSH key (most Windows setups).
 - `plaud-kit`: bump `version` in `plugins/plaud-kit/.claude-plugin/plugin.json` to release.
 - `ai-dev-team`: edit `.claude/agents/` or `skills/` in `BronzGreen/AI-Dev-Team`, run
   `bash scripts/build-plugin.sh`, merge, tag a release, then bump the `ref` in
