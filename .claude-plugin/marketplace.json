@@ -23,7 +23,7 @@
     {
       "name": "common-base",
       "source": "./plugins/common-base",
-      "description": "common-base is the one home of shared platform code: placement check (/common-base:waar-hoort-dit), reuse-first design for new products (/common-base:nieuw-product), guard against editing installed copies"
+      "description": "common-base is the one home of shared platform code: placement check (/common-base:waar-hoort-dit), reuse-first design for new products (/common-base:nieuw-product), guard against editing installed copies, release automation (/common-base:upstream-pr, /common-base:release-sweep)"
     }
   ]
 }
