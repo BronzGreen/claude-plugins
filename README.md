@@ -7,7 +7,7 @@ this repository can install from it.
 |---|---|
 | `ai-dev-team` | The AI Dev Team framework's 35 agents (`ai-dev-team:architect`, `ai-dev-team:backend-dev`, …) and its skills, from `BronzGreen/AI-Dev-Team`, pinned to a release tag |
 | `plaud-kit` | Plaud recordings → BRIDGE board cards (`/plaud-kit:plaud-inbox`), meeting digests (`/plaud-kit:plaud-digest`), meeting-vs-docs checks (`/plaud-kit:plaud-to-docs`) |
-| `common-base` | Keeps `BronzGreen/common-base` the one home of shared platform code in **every** project: `/common-base:waar-hoort-dit` (common-base or product?), `/common-base:nieuw-product` (start a new product on common-base, reuse before building), agent `common-base:placement`, a guard that blocks edits to installed `@bronzgreen/*` / Go-module-cache copies, and a session note that puts the rule in force in every BronzGreen repo. Install it globally (user scope) so it also applies to new projects. |
+| `common-base` | Keeps `BronzGreen/common-base` the one home of shared platform code in **every** project: `/common-base:waar-hoort-dit` (common-base or product?), `/common-base:nieuw-product` (start a new product on common-base, reuse before building), `/common-base:upstream-pr` (open the neutral common-base PR for a change a product needs) and `/common-base:release-sweep` (after a human merges: tag, CVS bump, product pin bumps), agent `common-base:placement`, a guard that blocks edits to installed `@bronzgreen/*` / Go-module-cache copies, and a session note that puts the rule in force in every BronzGreen repo. Install it globally (user scope) so it also applies to new projects. |
 
 ## Install (once per machine)
 
