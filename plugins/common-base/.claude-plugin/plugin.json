@@ -2,7 +2,7 @@
   "name": "common-base",
   "displayName": "common-base",
   "description": "Keeps BronzGreen/common-base the one home of shared platform code in every project: placement check before building, reuse-first design for new products, a guard against editing installed common-base copies, and the release recipe automated (upstream PR, then tag, CVS bump and product pin bumps after a human merges).",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": {
     "name": "BronzGreen"
   }

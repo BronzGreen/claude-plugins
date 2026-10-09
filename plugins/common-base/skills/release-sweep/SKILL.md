@@ -8,7 +8,8 @@ description: >-
   "Consumers waiting". Use at the start of every sprint-loop run, when someone
   says "release common-base", "the common-base PR is merged, now what", or
   "bump common-base", and whenever /common-base:upstream-pr work has been
-  merged. Safe to run when there is nothing to do. Never merges a PR.
+  merged. Safe to run when there is nothing to do. Never merges a product PR;
+  the CVS pin-bump PR merges itself through GitHub auto-merge once CVS CI is green.
 ---
 
 # /common-base:release-sweep
@@ -17,8 +18,11 @@ Recipe C-7 after the merge: **tag → CVS PR green → product pins**. The human
 merge of a `release:*` PR in common-base is the approval to release it; this
 skill does the mechanical rest so nobody has to remember the order.
 
-**It never merges a PR**, in any repo. It tags, because tagging a merged,
-reviewed change is the release step that merge approved.
+**It never merges a PR itself.** It tags, because tagging a merged, reviewed
+change is the release step that merge approved. The one PR that lands without a
+human is the CVS pin-bump: it changes nothing but pins, CVS CI is its review, so
+the sweep turns on GitHub auto-merge for it and the required `verify` check
+decides. Every product PR (BRIDGE and others) still waits for a human.
 
 ## 1. Anything to release?
 
@@ -67,7 +71,20 @@ In a fresh clone of `bronzgreen/cvs`, branch `chore/common-base-$TOP`:
 Run its checks, open the PR with the CHANGELOG entries in the body, and wait for
 its CI (`gh pr checks <n> --watch`). **Red CVS CI stops the sweep before any
 other product pins** — report the failure; fixing CVS is a normal CVS change.
-Green means continue; the CVS PR itself waits for a human to merge it.
+Turn on auto-merge as soon as the PR is open, so it lands the moment CVS CI is
+green:
+
+```bash
+gh pr merge <n> -R bronzgreen/cvs --auto --squash --delete-branch
+```
+
+CVS `main` requires the `verify` check, which only passes when the Go, vuln and
+web jobs all pass, so auto-merge cannot skip a red job. Only ever enable it on
+the sweep's own `chore/common-base-*` PR, and only when the diff is limited to
+pins and lockfiles (`go.mod`, `go.sum`, `package.json`, `package-lock.json`,
+workflow `uses:` refs); anything else in the diff means a human merges it. If
+the repo refuses auto-merge (setting off), leave the PR for a human and say so.
+Green means continue.
 
 ## 4. Product bumps
 
