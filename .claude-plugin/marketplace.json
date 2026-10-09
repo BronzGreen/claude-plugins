@@ -18,7 +18,12 @@
     {
       "name": "plaud-kit",
       "source": "./plugins/plaud-kit",
-      "description": "Plaud recordings \u2192 BRIDGE board cards, meeting digests and doc checks"
+      "description": "Plaud recordings → BRIDGE board cards, meeting digests and doc checks"
+    },
+    {
+      "name": "common-base",
+      "source": "./plugins/common-base",
+      "description": "common-base is the one home of shared platform code: placement check (/common-base:waar-hoort-dit), reuse-first design for new products (/common-base:nieuw-product), guard against editing installed copies"
     }
   ]
 }

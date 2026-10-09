@@ -1,0 +1,7 @@
+{
+  "name": "common-base",
+  "displayName": "common-base",
+  "description": "Keeps BronzGreen/common-base the one home of shared platform code in every project: placement check before building, reuse-first design for new products, and a guard against editing installed common-base copies.",
+  "version": "0.1.0",
+  "author": { "name": "BronzGreen" }
+}

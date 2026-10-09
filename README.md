@@ -7,6 +7,7 @@ this repository can install from it.
 |---|---|
 | `ai-dev-team` | The AI Dev Team framework's 35 agents (`ai-dev-team:architect`, `ai-dev-team:backend-dev`, …) and its skills, from `BronzGreen/AI-Dev-Team`, pinned to a release tag |
 | `plaud-kit` | Plaud recordings → BRIDGE board cards (`/plaud-kit:plaud-inbox`), meeting digests (`/plaud-kit:plaud-digest`), meeting-vs-docs checks (`/plaud-kit:plaud-to-docs`) |
+| `common-base` | Keeps `BronzGreen/common-base` the one home of shared platform code in **every** project: `/common-base:waar-hoort-dit` (common-base or product?), `/common-base:nieuw-product` (start a new product on common-base, reuse before building), agent `common-base:placement`, a guard that blocks edits to installed `@bronzgreen/*` / Go-module-cache copies, and a session note that puts the rule in force in every BronzGreen repo. Install it globally (user scope) so it also applies to new projects. |
 
 ## Install (once per machine)
 
@@ -41,9 +42,11 @@ you don't need an SSH key and you don't need a `git config url.…insteadOf` rew
    /plugin marketplace add BronzGreen/claude-plugins
    /plugin install ai-dev-team@bronzgreen
    /plugin install plaud-kit@bronzgreen
+   /plugin install common-base@bronzgreen
    ```
    Opening the BRIDGE repo does step 3 for you: its `.claude/settings.json` registers
-   this marketplace and enables both plugins after you trust the folder.
+   this marketplace and enables the plugins after you trust the folder. Install `common-base` from your
+   home directory (user scope) as well, so new projects get it too.
 4. Updates: `/plugin` → Marketplaces → `bronzgreen` → **Enable auto-update**, or run
    `/plugin marketplace update bronzgreen` now and then.
 
