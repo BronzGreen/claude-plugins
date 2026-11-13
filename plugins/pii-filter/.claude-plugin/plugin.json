@@ -1,0 +1,7 @@
+{
+  "name": "pii-filter",
+  "displayName": "PII-filter",
+  "description": "Automatic, local PII filtering with Microsoft Presidio (Dutch + English): reading a data file with personal data gives Claude a pseudonymised copy (<PERSON_1>, <NL_BSN_1>, ...), raw shell/Grep views of data files are blocked, and the local vault with real values stays off-limits. Works for subagents too. Code files are never touched, so development continues as normal.",
+  "version": "0.1.0",
+  "author": { "name": "BronzGreen" }
+}

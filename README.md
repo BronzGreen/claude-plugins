@@ -8,7 +8,7 @@ this repository can install from it.
 | `ai-dev-team` | The AI Dev Team framework's 35 agents (`ai-dev-team:architect`, `ai-dev-team:backend-dev`, …) and its skills, from `BronzGreen/AI-Dev-Team`, pinned to a release tag |
 | `plaud-kit` | Plaud recordings → BRIDGE board cards (`/plaud-kit:plaud-inbox`), meeting digests (`/plaud-kit:plaud-digest`), meeting-vs-docs checks (`/plaud-kit:plaud-to-docs`) |
 | `common-base` | Keeps `BronzGreen/common-base` the one home of shared platform code in **every** project: `/common-base:waar-hoort-dit` (common-base or product?), `/common-base:nieuw-product` (start a new product on common-base, reuse before building), `/common-base:upstream-pr` (open the neutral common-base PR for a change a product needs) and `/common-base:release-sweep` (after a human merges: tag, CVS bump, product pin bumps), agent `common-base:placement`, a guard that blocks edits to installed `@bronzgreen/*` / Go-module-cache copies, and a session note that puts the rule in force in every BronzGreen repo. Install it globally (user scope) so it also applies to new projects. |
-
+| `pii-filter` | Automatic, local PII filtering with Microsoft Presidio (Dutch + English). Reading a data file (csv/json/log/eml/txt/sql/xml) that contains personal data gives Claude a pseudonymised copy (`<PERSON_1>`, `<NL_BSN_1>`, …); raw shell/Grep views of data files are blocked; the local vault with real values is off-limits. Applies to subagents too. Code files are never touched. Install it globally (user scope). See [pii-filter](#pii-filter). |
 ## Install (once per machine)
 
 Claude Code clones this repository and `BronzGreen/AI-Dev-Team` with `git`, without
@@ -43,6 +43,7 @@ you don't need an SSH key and you don't need a `git config url.…insteadOf` rew
    /plugin install ai-dev-team@bronzgreen
    /plugin install plaud-kit@bronzgreen
    /plugin install common-base@bronzgreen
+   /plugin install pii-filter@bronzgreen
    ```
    Opening the BRIDGE repo does step 3 for you: its `.claude/settings.json` registers
    this marketplace and enables the plugins after you trust the folder. Install `common-base` from your
@@ -132,6 +133,61 @@ ships with Windows and Git for Windows).
 
 Optional daily digest from cron/launchd: `claude -p "/plaud-kit:plaud-digest today"`.
 
+## pii-filter
+
+### What happens
+- **Read** of `.csv .tsv .txt .log .json .jsonl .ndjson .xml .eml .sql .vcf`: Presidio scans the file locally.
+  If it contains personal data, Claude reads a pseudonymised copy instead (`Jan de Vries` → `<PERSON_1>`;
+  the same value gets the same token everywhere, so relations survive). Clean files are read as-is.
+- **Bash / PowerShell** commands that print a data file (`cat`, `head`, `Get-Content`, `Import-Csv`, `grep`, `jq`, …)
+  and **Grep** with `output_mode: content` on data files are refused with a pointer to the CLI.
+- The **vault** with real values (`~/.claude/pii-vault/`) is never readable by Claude. Restoring real values
+  (`pii.py deanonymize … -o file`) only writes to a file.
+- Code and config (`package.json`, `tsconfig`, `node_modules`, `.claude/`, …) are never filtered.
+- Hooks also apply to subagents. Nothing leaves the machine.
+
+### Requirements and first run
+Git Bash on Windows (same as `common-base`) and either [uv](https://docs.astral.sh/uv/)
+(`winget install astral-sh.uv` / `brew install uv`, recommended) or Python 3.10–3.13.
+On the first session the plugin installs Presidio + the spaCy NL/EN models (~300 MB) into its own data
+directory in the background (a few minutes, log: `~/.claude/plugins/data/pii-filter*/setup-log.txt`).
+Until that is done, data files are **refused**, not passed through. Ask Claude for `pii.py status` to check.
+
+### Per-project settings
+Commit a `.pii-filter.json` in the repo root; lists extend the defaults:
+```json
+{
+  "allow_list": ["Toteco"],
+  "column_hints": { "debiteurnaam|relatie": "PERSON" },
+  "hook": { "exclude_globs": ["*/src/i18n/*.json", "*/testdata/synthetic/*"] }
+}
+```
+Personal additions go in `~/.claude/pii-filter.json`. One session without filter: start `claude` with
+`PII_FILTER=off`.
+
+### Enforce it for everyone (admins)
+Managed settings win over user settings, so the plugin can be switched on centrally and can't be
+switched off. Either in claude.ai → Organization settings → Claude Code → Managed settings (Teams/Enterprise,
+Owner role), or in the managed settings file (`C:\Program Files\ClaudeCode\managed-settings.json` on Windows,
+`/Library/Application Support/ClaudeCode/managed-settings.json` on macOS):
+```json
+{
+  "extraKnownMarketplaces": {
+    "bronzgreen": { "source": { "source": "github", "repo": "BronzGreen/claude-plugins" } }
+  },
+  "enabledPlugins": { "pii-filter@bronzgreen": true },
+  "env": { "PII_FILTER_ENFORCED": "1" }
+}
+```
+`PII_FILTER_ENFORCED=1` makes the plugin ignore `PII_FILTER=off`, `"enabled": false` and `fail_mode: "open"`.
+Users still need read access to this repo plus `gh auth setup-git` (see Install). The hooks only exist in
+Claude Code and the Agent SDK (load the plugin with `plugins=[{"type": "local", "path": …}]`); claude.ai chat,
+desktop chat and mobile are not covered.
+
+### Limits
+Detection is statistical: a name can slip through or a word gets replaced needlessly. A script that prints
+records itself, MCP tools and WebFetch are outside the hooks. Treat it as a strong safety net, not a guarantee.
+
 ## Data rules (built into the skills)
 
 - Plaud access is read-only and per user; nobody sees someone else's recordings.
@@ -149,6 +205,9 @@ Optional daily digest from cron/launchd: `claude -p "/plaud-kit:plaud-digest tod
 - Write every git-based plugin source as a full `https://github.com/…git` URL, never the
   `owner/repo` shorthand: the shorthand makes Claude Code try SSH first, which breaks
   installs on machines without a GitHub SSH key (most Windows setups).
+- `pii-filter`: run `python plugins/pii-filter/tests/test_hook_shell.py` and
+  `python plugins/pii-filter/tests/test_hook_e2e.py <plugin-data-dir>` (after `scripts/setup.sh`), then bump
+  `version` in its `plugin.json`. Bumping `scripts/requirements.txt` makes every machine reinstall on next start.
 - `plaud-kit`: bump `version` in `plugins/plaud-kit/.claude-plugin/plugin.json` to release.
 - `ai-dev-team`: edit `.claude/agents/` or `skills/` in `BronzGreen/AI-Dev-Team`, run
   `bash scripts/build-plugin.sh`, merge, tag a release, then bump the `ref` in

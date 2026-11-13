@@ -1,0 +1,48 @@
+{
+  "enabled": true,
+  "default_language": "nl",
+  "score_threshold": 0.5,
+  "entities": [
+    "PERSON",
+    "EMAIL_ADDRESS",
+    "PHONE_NUMBER",
+    "IBAN_CODE",
+    "CREDIT_CARD",
+    "IP_ADDRESS",
+    "LOCATION",
+    "NL_BSN",
+    "NL_POSTCODE",
+    "NL_ADDRESS"
+  ],
+  "allow_list": ["BronzGreen", "BRIDGE", "FlameTales", "Claude", "Presidio"],
+  "column_hints": {
+    "(voor|achter|roep|volledige|klant|contact|medewerker)?naam|(first|last|full|given|family|sur)?name|tussenvoegsels?|contactpersoon|initialen|voorletters": "PERSON",
+    "e?mail(adres)?|emailaddress": "EMAIL_ADDRESS",
+    "(tel|telefoon|telefoonnummer|mobiel|mobielnummer|gsm|phone|mobile|telnr)(nummer|nr)?\\d?": "PHONE_NUMBER",
+    "bsn|burgerservicenummer|sofinummer|ssn": "NL_BSN",
+    "iban|rekeningnummer|bankrekening|rekeningnr": "IBAN_CODE",
+    "(woon|post|bezoek|factuur)?adres(regel)?\\d?|straat(naam)?|huisnummer|huisnr|toevoeging|address(line)?\\d?|street": "NL_ADDRESS",
+    "postcode|zip(code)?|postalcode": "NL_POSTCODE",
+    "geboortedatum|geb(oorte)?datum|dateofbirth|birthdate|dob": "DATE_OF_BIRTH",
+    "woonplaats|plaats|city|stad": "LOCATION"
+  },
+  "hook": {
+    "read_extensions": [".csv", ".tsv", ".txt", ".log", ".json", ".jsonl", ".ndjson", ".xml", ".eml", ".sql", ".vcf"],
+    "data_extensions_for_shell": [".csv", ".tsv", ".xlsx", ".xlsm", ".xls", ".eml", ".vcf", ".sql", ".log", ".jsonl", ".ndjson"],
+    "exclude_globs": [
+      "*/node_modules/*", "*/.git/*", "*/.venv/*", "*/venv/*", "*/site-packages/*",
+      "*/dist/*", "*/build/*", "*/.next/*",
+      "*/.claude/*", "*/.vscode/*", "*/.idea/*",
+      "*/package.json", "*/package-lock.json", "*/composer.json", "*/composer.lock",
+      "*/tsconfig*.json", "*/jsconfig*.json", "*/*.config.json", "*/appsettings*.json",
+      "*/*.schema.json", "*/manifest.json", "*/launch.json", "*/settings.json",
+      "*/requirements*.txt", "*/license*", "*/licence*", "*/cmakelists.txt", "*/robots.txt",
+      "*/go.sum", "*/*.lock", "*/*.min.js", "*/*.map"
+    ],
+    "max_lines": 5000,
+    "max_bytes": 25000000,
+    "fail_mode": "closed",
+    "block_shell_viewers": true,
+    "block_grep_content": true
+  }
+}
