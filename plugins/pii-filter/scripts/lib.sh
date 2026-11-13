@@ -30,3 +30,18 @@ pii_host_python() {
   done
   return 1
 }
+
+# JSON string literal (with quotes) from $1, pure bash: no jq/python needed at session start.
+pii_json_str() {
+  # Quoted variables on both sides: bash 5.2 (patsub_replacement) otherwise eats backslashes.
+  local s="$1" bs='\' bs2='\\' q='"' q2='\"' nl=$'\n' nl2='\n' cr=$'\r' tab=$'\t' tab2='\t'
+  s="${s//"$bs"/"$bs2"}"; s="${s//"$q"/"$q2"}"
+  s="${s//"$nl"/"$nl2"}"; s="${s//"$cr"/}"; s="${s//"$tab"/"$tab2"}"
+  printf '"%s"' "$s"
+}
+
+# SessionStart output: $1 = one-liner shown to the user, $2 = context for Claude.
+pii_session_output() {
+  printf '{"systemMessage":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' \
+    "$(pii_json_str "$1")" "$(pii_json_str "$2")"
+}
