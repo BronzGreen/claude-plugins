@@ -21,6 +21,11 @@
       "description": "Plaud recordings → BRIDGE board cards, meeting digests and doc checks"
     },
     {
+      "name": "pii-filter",
+      "source": "./plugins/pii-filter",
+      "description": "Automatic local PII filtering (Microsoft Presidio, NL+EN): data files reach Claude pseudonymised, raw views of data files are blocked"
+    },
+    {
       "name": "common-base",
       "source": "./plugins/common-base",
       "description": "common-base is the one home of shared platform code: placement check (/common-base:waar-hoort-dit), reuse-first design for new products (/common-base:nieuw-product), guard against editing installed copies, release automation (/common-base:upstream-pr, /common-base:release-sweep)"

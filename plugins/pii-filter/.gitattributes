@@ -1,0 +1,2 @@
+# shell scripts must keep LF, or bash on Windows (autocrlf=true) breaks on 
+*.sh text eol=lf
