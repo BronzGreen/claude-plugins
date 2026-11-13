@@ -1,8 +1,10 @@
 """Claude Code PostToolUse hook: did personal data reach Claude anyway? Standard library only.
 
 Checks what the model actually received from:
-  Read   of a pseudonymised copy (pii-vault/cache) or of a data file the filter let through
-  Bash / PowerShell commands that reference a data file
+  Read   of any file (pseudonymised copy, or an original the filter let through); images and
+         excluded paths are skipped
+  Bash / PowerShell commands that reference a data/document file
+  Grep   in content mode
 On a hit: register an AVG datalek in BRIDGE (queued locally when BRIDGE/token is unavailable),
 tell the user (systemMessage) and Claude (additionalContext). One report per source per session.
 
@@ -23,10 +25,7 @@ from pii_hook import PATH_TOKEN, is_excluded, norm  # noqa: E402
 
 
 def plugin_version() -> str:
-    try:
-        return json.loads((pc.PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text("utf-8"))["version"]
-    except (OSError, ValueError, KeyError):
-        return "?"
+    return pc.plugin_version()
 
 
 def response_text(resp) -> str:
@@ -47,25 +46,44 @@ def response_text(resp) -> str:
     return "\n".join(parts)
 
 
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
+
+
+def _orig_name(p: Path) -> tuple[str, str]:
+    """(original file name, extension) for a path, also for a cached pseudonymised copy
+    (<stem>.pii-sanitized.<hash><ext>[.txt])."""
+    name = re.sub(r"\.pii-sanitized\.[0-9a-f]{10}", "", p.name)
+    if norm(p).startswith(norm(pc.CACHE_DIR)) and name.endswith(".txt") and name.count(".") >= 2:
+        name = name[:-4]  # document delivered as text: report.pdf.txt -> report.pdf
+    return name, Path(name).suffix.lstrip(".").lower()
+
+
 def source_for(tool: str, inp: dict, cfg: dict) -> dict | None:
     hcfg = cfg["hook"]
     if tool == "Read":
         p = Path(inp.get("file_path") or "")
-        in_cache = norm(p).startswith(norm(pc.CACHE_DIR))
-        if in_cache:
-            # sanitized copy: name is <stem>.pii-sanitized.<hash><ext>
-            return {"key": norm(p), "ext": p.suffix.lstrip(".").lower(), "filtered": True}
-        if p.suffix.lower() in hcfg["read_extensions"] and not is_excluded(p, hcfg["exclude_globs"]):
-            return {"key": norm(p), "ext": p.suffix.lstrip(".").lower(), "filtered": False}
-        return None
+        name, ext = _orig_name(p)
+        if norm(p).startswith(norm(pc.CACHE_DIR)):
+            return {"key": norm(p), "ext": ext, "filtered": True, "file_name": name}
+        if p.suffix.lower() in IMAGE_EXTS or is_excluded(p, hcfg["exclude_globs"]):
+            return None
+        return {"key": norm(p), "ext": ext, "filtered": False, "file_name": name}
     if tool in ("Bash", "PowerShell"):
         cmd = inp.get("command") or ""
         if "pii.py" in cmd.lower():
             return None
         exts = "|".join(re.escape(e.lstrip(".")) for e in hcfg["data_extensions_for_shell"])
         m = re.search(rf"{PATH_TOKEN}\.({exts})\b", cmd, re.I)
-        if m:
-            return {"key": norm(m.group(0)), "ext": m.group(1).lower(), "filtered": False}
+        if m and not is_excluded(Path(m.group(0)), hcfg["exclude_globs"]):
+            first = (cmd.strip().split() or ["?"])[0].strip("'\"&")
+            return {"key": norm(m.group(0)), "ext": m.group(1).lower(), "filtered": False,
+                    "file_name": Path(m.group(0)).name, "command_name": Path(first).name[:40]}
+    if tool == "Grep" and (inp.get("output_mode") or "files_with_matches") == "content":
+        target = str(inp.get("path") or inp.get("glob") or "")
+        return {"key": "grep|" + norm(target) + "|" + str(inp.get("pattern", ""))[:80],
+                "ext": Path(target).suffix.lstrip(".").lower() or "meerdere", "filtered": False,
+                "file_name": Path(target).name if Path(target).suffix else "",
+                "command_name": "Grep (zoekresultaten)"}
     return None
 
 
@@ -98,7 +116,8 @@ def main():
     src = source_for(tool, payload.get("tool_input") or {}, cfg)
     if not src:
         return
-    found = leak.detect(response_text(payload.get("tool_response")), cfg)
+    details: list = []
+    found = leak.detect(response_text(payload.get("tool_response")), cfg, details)
     if not found:
         return
 
@@ -107,22 +126,26 @@ def main():
         return
     source = {"tool": tool, "ext": src["ext"], "project": Path(cwd).name, "session_id": session,
               "plugin_version": plugin_version(), "filtered_copy": src["filtered"], "automatic": True,
-              "path": src["key"]}  # path stays local (queue/sent log), never in the BRIDGE body
-    report = leak.build_report(found, source)
+              "file_name": src.get("file_name", ""), "command_name": src.get("command_name"),
+              "path": src["key"]}  # full path stays local (queue/sent log), never in the BRIDGE body
+    report = leak.build_report(found, source, details=details, cfg=cfg)
     leak.enqueue(report)
     res = leak.flush()
-    counts = ", ".join(f"{leak.LABELS.get(k, k)} {len(v)}x" for k, v in sorted(found.items()))
+    wat = leak.describe(found, details)
+    advies = report["assessment"]["label"]
     ref = report["body"]["referentie"]
     if any(r["local_ref"] == report["local_ref"] for r in res["sent"]):
-        status = f"datalek {ref} geregistreerd in BRIDGE (ISMS → datalekken); de privacy officer wordt gemaild"
+        status = "geregistreerd in BRIDGE, privacy officer gemaild"
     else:
-        status = (f"datalek {ref} staat in de lokale wachtrij ({res['error'] or 'onbekende fout'}); "
+        status = (f"in lokale wachtrij ({res['error'] or 'onbekende fout'}); "
                   "wordt bij de volgende sessie opnieuw verstuurd")
-    emit(f"⚠️ PII-filter: mogelijk persoonsgegevens doorgelekt ({counts}) — {status}.",
+    emit(f"⚠️ PII-filter datalek {ref}: {report['body']['samenvatting']} — {status}. Advies: {advies}.",
          f"PII-filter: in de zojuist ontvangen output van {tool} zitten waarschijnlijk persoonsgegevens "
-         f"({counts}) die het filter niet heeft vervangen. Er is automatisch een datalekmelding gedaan: {status}. "
+         f"({wat}) die het filter niet heeft vervangen. Hoe: {leak.route_text(source)}. "
+         f"Datalekmelding {ref}: {status}. {report['assessment']['tekst']} "
          "Herhaal deze gegevens niet in je antwoord, gebruik ze niet in code of commits, en meld het kort aan "
-         "de gebruiker. Stel indien zinvol een aanvulling voor in .pii-filter.json.")
+         "de gebruiker: welke soort gegevens, hoe ze binnenkwamen, de referentie en de inschatting van de "
+         "meldplicht met motivering. Stel indien zinvol een aanvulling voor in .pii-filter.json.")
 
 
 if __name__ == "__main__":

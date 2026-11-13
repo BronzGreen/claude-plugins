@@ -7,7 +7,7 @@ if [ "${PII_FILTER_ENFORCED:-}" != "1" ] && [ "$(printf '%s' "${PII_FILTER:-}" |
 fi
 CLI="\"$PII_VENV_PY\" \"$PII_ROOT/scripts/pii.py\""
 if [ -f "$PII_DATA/ready.json" ] && [ -x "$PII_VENV_PY" ]; then
-  STATE="actief"; UI="🔒 PII-filter actief: databestanden worden gepseudonimiseerd"
+  STATE="actief"; UI="🔒 PII-filter actief: alle gelezen bestanden worden gecontroleerd en zo nodig gepseudonimiseerd"
 elif [ -f "$PII_DATA/setup-failed.json" ]; then
   UI="⚠️ PII-filter NIET geïnstalleerd: databestanden worden geweigerd (zie $PII_DATA/setup-log.txt)"
   STATE="NIET geïnstalleerd (zie $PII_DATA/setup-log.txt); databestanden worden geweigerd tot dit is opgelost. Meld dit aan de gebruiker"
@@ -23,9 +23,9 @@ if [ -z "${PII_BRIDGE_PAT:-}" ] && [ ! -f "${PII_FILTER_ENV:-$HOME/.config/pii-f
 fi
 CTX="$(cat <<MSG
 PII-filter (plugin pii-filter@bronzgreen): $STATE.
-Read op databestanden (csv/json/log/eml/txt/sql/xml) geeft automatisch een gepseudonimiseerde kopie als er persoonsgegevens in staan; tokens als <PERSON_1> zijn consistente pseudoniemen.
+Elk bestand dat je leest wordt gecontroleerd: databestanden (csv/json/log/eml/txt/sql/xml), documenten (pdf/docx/pptx/xlsx, als tekstversie) en code/markdown met persoonsgegevens geven automatisch een gepseudonimiseerde kopie; tokens als <PERSON_1> zijn consistente pseudoniemen.
 Toon databestanden nooit via shell (cat/head/Get-Content/print van records). CLI: $CLI {scan|anonymize|text|status|leaks|report-leak} — zie skills pii-filter:pii-filter en pii-filter:datalek-melden.
-Glipt er toch PII door, dan meldt de plugin automatisch een datalek in BRIDGE (ISMS); zie je zelf PII die niet gefilterd is, gebruik dan skill pii-filter:datalek-melden. ${LEAKS}
+Glipt er toch PII door, dan meldt de plugin automatisch een datalek in BRIDGE (ISMS); zie je zelf PII die niet gefilterd is, gebruik dan skill pii-filter:datalek-melden (altijd met wat, hoe en je inschatting van de meldplicht). ${LEAKS}
 MSG
 )"
 pii_session_output "$UI" "$CTX"

@@ -1,6 +1,7 @@
 """PII-filter CLI (Microsoft Presidio, volledig lokaal).
 
-  pii.py scan <bestand>                    telt PII per type + regelnummers (toont GEEN waarden)
+  pii.py scan <bestand>                    telt PII per type + regelnummers (toont GEEN waarden);
+                                           ook pdf/docx/pptx/xlsx/odf
   pii.py anonymize <bestand> [-o uit]      schrijft gepseudonimiseerde kopie, print pad + tellingen
   pii.py anonymize -                       stdin -> gepseudonimiseerde stdout
   pii.py text "Jan woont in Utrecht"       losse tekst pseudonimiseren
@@ -59,13 +60,17 @@ def cmd_text(a):
 def cmd_scan(a):
     core, flt = _filter(a)
     src = Path(a.src)
-    if src.suffix.lower() in (".xlsx", ".xlsm"):
+    import pii_extract
+
+    if src.suffix.lower() in pii_extract.DOC_EXTENSIONS:
         pc.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = pc.CACHE_DIR / "scan-tmp.xlsx"
+        tmp = pc.CACHE_DIR / "scan-tmp.txt"
         with core.Vault() as v:
-            flt.filter_xlsx(src, tmp, v, max_rows=a.max_lines)
+            stats = core.filter_document(flt, src, tmp, v, max_lines=a.max_lines)
         tmp.unlink(missing_ok=True)
-        print(json.dumps({"file": str(src), "by_entity": flt.counts}, ensure_ascii=False))
+        print(json.dumps({"file": str(src), "by_entity": flt.counts,
+                          "unreadable_pages": stats.get("unreadable_pages"),
+                          "note": "waarden worden bewust niet getoond"}, ensure_ascii=False))
         return
     lines = core.read_text(src).splitlines()
     if a.max_lines:
@@ -125,33 +130,60 @@ def cmd_status(a):
 
 
 def cmd_report_leak(a):
-    """Manual datalek report (skill datalek-melden). Never pass the leaked values themselves."""
+    """Manual datalek report (skill datalek-melden). Never pass the leaked values themselves.
+
+    The report states WHICH kinds of data (types, counts, where) and HOW they came in, and always
+    carries an assessment of the meldplicht: the automatic one, or Claude's own via --advies/--motivering.
+    """
     import pii_leak as leak
 
-    counts = {}
+    cfg = pc.load_config(a.project or os.getcwd())
+    counts, details = {}, []
     for part in filter(None, (a.types or "").split(",")):
         k, _, n = part.partition("=")
-        counts[k.strip().upper()] = set(range(int(n or 1)))
+        k = k.strip().upper()
+        counts[k] = set(range(int(n or 1)))
+    for w in a.waar or []:  # "PERSON=kolom 'Naam'"
+        k, _, basis = w.partition("=")
+        details.append({"type": k.strip().upper(), "basis": basis.strip()})
     note = (a.note or "").strip()
-    found_in_note = leak.detect(note, pc.load_config(a.project or os.getcwd()))
-    if found_in_note:
-        sys.exit("de toelichting bevat zelf persoonsgegevens (" + ", ".join(found_in_note) +
-                 "); beschrijf alleen wat voor gegevens het waren, niet de gegevens zelf")
+    texts = [note, a.motivering or "", *(d["basis"] for d in details)]
+    if any(leak.detect(t, cfg) for t in texts):
+        sys.exit("de toelichting/motivering bevat zelf persoonsgegevens; beschrijf alleen wat voor "
+                 "gegevens het waren, niet de gegevens zelf")
     source = {"tool": a.source or "handmatig", "ext": (a.ext or "").lstrip(".") or None,
               "project": Path(a.project or os.getcwd()).name, "session_id": a.session or "",
-              "plugin_version": json.loads((pc.PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
-                                           .read_text("utf-8")).get("version", "?"),
-              "automatic": False}
-    report = leak.build_report(counts, source, note=note)
+              "plugin_version": pc.plugin_version(), "automatic": False,
+              "file_name": a.file_name or "", "eigen": bool(a.eigen_gegevens),
+              "betrokkenen": a.betrokkenen, "hoe_kort": a.source, "melder": a.melder}
+    n = a.betrokkenen if a.betrokkenen is not None else max([0, *(len(v) for v in counts.values())])
+    assessment = leak.assess({k: len(v) for k, v in counts.items()}, cfg, eigen=bool(a.eigen_gegevens),
+                             betrokkenen=n)
+    if a.advies:
+        motivering = (a.motivering or "").strip()
+        if not motivering:
+            sys.exit("--advies vraagt ook --motivering (waarom wel/niet melden)")
+        assessment = {**assessment, "advies": a.advies, "label": leak.ADVIES_LABEL[a.advies],
+                      "redenen": [motivering],
+                      "tekst": (f"Inschatting meldplicht (advies melder/AI-sessie, geen besluit): "
+                                f"{leak.ADVIES_LABEL[a.advies]}. Motivering: {motivering} "
+                                f"Automatische inschatting PII-filter: {assessment['label']}. "
+                                "Altijd registreren in het datalekkenregister (art. 33 lid 5). "
+                                "De meldbeslissing neemt de privacy officer.")}
+    report = leak.build_report(counts, source, note=note, details=details, cfg=cfg, assessment=assessment)
     leak.enqueue(report)
     res = leak.flush()
-    sent = any(r["local_ref"] == report["local_ref"] for r in res["sent"])
+    sent = next((r for r in res["sent"] if r["local_ref"] == report["local_ref"]), None)
     print(json.dumps({"referentie": report["body"]["referentie"],
                       "status": "geregistreerd in BRIDGE" if sent else "in lokale wachtrij",
+                      "bridge_api": leak.credentials()[1],
                       "fout": None if sent else res["error"],
-                      "termijn_uiterlijk": next((r.get("termijn_uiterlijk") for r in res["sent"]
-                                                 if r["local_ref"] == report["local_ref"]), None)},
-                     ensure_ascii=False))
+                      "termijn_uiterlijk": sent.get("termijn_uiterlijk") if sent else None,
+                      "wat": leak.describe(counts, details),
+                      "hoe": leak.route_text(source),
+                      "advies": assessment["label"],
+                      "motivering": assessment["redenen"]},
+                     ensure_ascii=False, indent=1))
 
 
 def cmd_leaks(a):
@@ -194,6 +226,16 @@ def main():
     s.add_argument("--source", help="hoe het binnenkwam, bv. 'Read', 'Bash-output', 'plak in chat'")
     s.add_argument("--ext", help="bestandstype, bv. csv")
     s.add_argument("--note", help="korte toelichting ZONDER persoonsgegevens")
+    s.add_argument("--waar", action="append", metavar="TYPE=PLEK",
+                   help="waar het stond, zonder waarde, bv. \"PERSON=kolom 'Naam'\" (herhaalbaar)")
+    s.add_argument("--file-name", help="bestandsnaam (wordt weggelaten als die zelf PII lijkt te bevatten)")
+    s.add_argument("--betrokkenen", type=int, help="geschat aantal betrokkenen")
+    s.add_argument("--eigen-gegevens", action="store_true",
+                   help="het gaat om eigen gegevens van de melder (bv. een bewuste test)")
+    s.add_argument("--advies", choices=["niet_melden", "beoordelen", "wel_melden"],
+                   help="eigen inschatting van de meldplicht (anders: automatische inschatting)")
+    s.add_argument("--motivering", help="motivering bij --advies, zonder persoonsgegevens")
+    s.add_argument("--melder", help="bij wie het lek optrad (medewerker); standaard MELDER in het env-bestand of git user.name")
     s.add_argument("--session", help="sessie-id (optioneel)")
     s.set_defaults(fn=cmd_report_leak)
     s = sub.add_parser("leaks", parents=[common], help="meldingen: wachtrij, verzonden, token-status")

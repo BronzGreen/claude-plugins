@@ -103,14 +103,51 @@ class Vault:
 
 
 # --------------------------------------------------------------------------- engine
+DATA_DIR_PLUGIN = Path(__file__).resolve().parent.parent / "data"
+
+# Woonplaatsen that are also ordinary words or common name parts: only recognised with context
+# ("woont in Best"). Names of 4 letters or fewer are treated the same way.
+AMBIGUOUS_PLACES = {
+    "Best", "Born", "Hoek", "Lent", "Well", "Loon", "Ens", "Son", "Putten", "Haren", "Lith", "Wouw",
+    "Echt", "Ee", "Mill", "Elst", "Wijk", "Gemert", "Rijs", "Nes", "Sluis", "Beek", "Bergen", "Laren",
+    "Halle", "Doorn", "Linde", "Huis", "Berg", "Holten", "Dijk", "Vaart", "Hall", "Stad", "Dorst",
+    "Eden", "Nieuwland", "Oosterend", "Westerland", "Kamp", "Boer", "Dam", "Gaast", "Lage", "Hoge",
+    "Midden", "Noord", "Oost", "Zuid", "West", "Eck", "Esch", "Nij", "Ter", "Venhuizen", "Kolham",
+    "Raard", "Molenend", "Vlijmen", "Steenbergen", "Weert", "Hengelo",
+}
+
+
+def _place_names() -> list[str]:
+    f = DATA_DIR_PLUGIN / "woonplaatsen-nl.txt"
+    try:
+        lines = f.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [l.strip() for l in lines if l.strip() and not l.startswith("#")]
+
+
+def _nl_phone_digits(raw: str) -> str | None:
+    """Normalise a Dutch phone number to 10 digits starting with 0, or None."""
+    d = re.sub(r"\D", "", raw)
+    if raw.strip().startswith("+") or d.startswith("0031"):
+        d = d[4:] if d.startswith("0031") else d[2:]  # drop (00)31
+        if d.startswith("0"):  # +31 (0)6 ...
+            d = d[1:]
+        d = "0" + d
+    return d if len(d) == 10 and d[0] == "0" and d[1] != "0" else None
+
+
 def _nl_recognizers(lang: str):
     from presidio_analyzer import Pattern, PatternRecognizer
 
     CASE_SENSITIVE = re.DOTALL | re.MULTILINE  # Presidio defaults to IGNORECASE
+    IGNORE_CASE = re.DOTALL | re.MULTILINE | re.IGNORECASE
 
     class BsnRecognizer(PatternRecognizer):
         def validate_result(self, pattern_text):
             digits = re.sub(r"\D", "", pattern_text)
+            if len(digits) == 8:
+                digits = "0" + digits  # leading zero lost (Excel)
             if len(digits) != 9 or digits == "000000000":
                 return False
             total = sum(int(d) * w for d, w in zip(digits[:8], range(9, 1, -1)))
@@ -118,60 +155,183 @@ def _nl_recognizers(lang: str):
             # None = keep the pattern score (don't bump to 1.0), False = drop
             return None if total % 11 == 0 else False
 
+    sep = r"[ .\-]"
     bsn = BsnRecognizer(
         supported_entity="NL_BSN",
         supported_language=lang,
         patterns=[
-            Pattern("bsn_plain", r"\b\d{9}\b", 0.5),
-            Pattern("bsn_dotted", r"\b\d{4}\.\d{2}\.\d{3}\b", 0.6),
+            Pattern("bsn_plain", r"(?<![\d.,\-])\d{9}(?!\d|[.,\-]\d)", 0.5),
+            # 1234.56.789, 123-45-678, 123 456 789, 1234 56 789, 12.34.56.789 ...
+            Pattern("bsn_separated",
+                    rf"(?<![\d.,\-])(?<!\d )\d{{2,4}}(?:{sep}\d{{2,4}}){{1,3}}(?!\d|{sep}\d)", 0.5),
+            # 8 digits (leading zero lost): only with context
+            Pattern("bsn_8", r"(?<![\d.,\-])\d{8}(?!\d|[.,\-]\d)", 0.2),
         ],
         context=["bsn", "burgerservicenummer", "sofinummer", "sofi", "persoonsnummer"],
     )
+
+    # Postcodes. Upper case is common and safe; lower case / glued needs care (units, hex colours).
+    units = (r"(?!(?:px|pt|em|ms|mg|kg|km|cm|mm|ml|cl|dl|gb|mb|kb|tb|hz|kw|mw|gw|wh|ah|ma|mv|kv|nm|um|ns|"
+             r"us|ps|st|nd|rd|th|am|pm|sa|sd|ss|de|en|in|op|is|te|om|al|nu|er|ik|je|we|ze|na|of|"
+             r"ga|ja|zo|af|uur|jr)\b)")
+    place = r"(?:\s{1,2}(?:'s-)?[A-Z][\w'-]+(?:\s(?:aan\s(?:de|den)\s)?[A-Z][\w'-]+)?)?"
     postcode = PatternRecognizer(
         supported_entity="NL_POSTCODE",
         supported_language=lang,
         global_regex_flags=CASE_SENSITIVE,
         patterns=[
-            # postcode, optionally followed by the place name: "1071 AZ Amsterdam",
-            # "2900 AB Capelle aan den IJssel", "2511 CV 's-Gravenhage"
-            Pattern(
-                "postcode",
-                r"\b[1-9]\d{3}\s?(?!SA|SD|SS)[A-Z]{2}\b"
-                r"(?:\s{1,2}(?:'s-)?[A-Z][\w'-]+(?:\s(?:aan\s(?:de|den)\s)?[A-Z][\w'-]+)?)?",
-                0.6,
-            )
+            # "1071 AZ Amsterdam", "2900 AB Capelle aan den IJssel", "2511 CV 's-Gravenhage", "1071-AZ"
+            Pattern("postcode", r"\b[1-9]\d{3}[\s\-]?(?!SA|SD|SS)[A-Z]{2}\b" + place, 0.6),
         ],
-        context=["postcode", "adres", "woonplaats"],
+        context=["postcode", "adres", "woonplaats", "wonend", "woont"],
     )
+    postcode_lc = PatternRecognizer(
+        supported_entity="NL_POSTCODE",
+        supported_language=lang,
+        global_regex_flags=IGNORE_CASE,
+        patterns=[
+            # "6060cp", "6060Cp": glued, not a unit, not a hex colour / 0x value
+            Pattern("postcode_vast", r"(?<![#\w])[1-9]\d{3}" + units + r"[a-z]{2}\b", 0.5),
+            # "6060 cp": too much like normal text ("2026 is"), only with context
+            Pattern("postcode_spatie", r"(?<![#\w])[1-9]\d{3}\s" + units + r"[a-z]{2}\b", 0.2),
+        ],
+        context=["postcode", "adres", "woonplaats", "wonend", "woont", "pc"],
+    )
+
     street_suffix = (
         r"(?:straat|laan|weg|plein|gracht|kade|singel|dijk|steeg|hof|park|dreef|pad|"
-        r"markt|ring|baan|haven|veld|wal|erf|akker|hoeve|lei|dam|burg|berg|bos|tuin)"
+        r"markt|ring|baan|haven|veld|wal|erf|akker|hoeve|lei|dam|burg|berg|bos|tuin|"
+        r"str\.|ln\.|pln?\.|wg\.|sngl\.|gr\.)"
     )
-    # huisnummer + toevoeging: 12, 12a, 12 A, 12-3, 12-II, 12 bis
-    huisnr = r"\s+\d{1,5}(?:[a-zA-Z]{1,2}\b|-\d{1,3}\b|-[a-zA-Z]{1,4}\b|\s[A-Z]\b|\sbis\b)?"
+    # huisnummer + toevoeging: 12, 12a, 12 A, 12-3, 12/3, 12-II, 12 bis, 12 hs, 12 bus 3, nr. 12, 12-14
+    huisnr = (r"\s*,?\s*(?:nr\.?\s*|no\.?\s*)?\d{1,5}"
+              r"(?:\s?[a-zA-Z]{1,2}\b|[-/]\d{1,4}\b|-[a-zA-Z]{1,4}\b|"
+              r"\s(?:hs|bis|huis|boven|beneden|bg|I{1,3}|IV|bus\s?\d{1,4})\b|\s[A-Z]\b)?")
     address = PatternRecognizer(
         supported_entity="NL_ADDRESS",
         supported_language=lang,
         global_regex_flags=CASE_SENSITIVE,
         patterns=[
-            Pattern("straat_huisnummer", r"\b[A-Z][\w'-]*" + street_suffix + huisnr, 0.65),
+            Pattern("straat_huisnummer", r"\b[A-Z][\w'-]*" + street_suffix + huisnr + r"(?!\d)", 0.65),
             # "Van Baerlestraat 12", "Jan van Galenstraat 4", "Burgemeester de Withstraat 9"
             Pattern(
                 "lange_straatnaam_huisnummer",
                 r"\b[A-Z][a-z'-]+\s(?:(?:[A-Z][a-z'-]+|van|de|der|den|het|ter|ten|te)\s){0,3}[A-Z]?[\w'-]*"
-                + street_suffix + huisnr,
+                + street_suffix + huisnr + r"(?!\d)",
                 0.6,
             ),
+            # "Laan van Meerdervoort 12", "Kade Oost 4"
+            Pattern(
+                "straat_vooraan",
+                r"\b(?:Laan|Plein|Kade|Dijk|Singel|Weg|Straat|Markt|Burgwal|Gracht|Dreef|Hof)"
+                r"(?:\s(?:van|de|der|den|het|op|ter|ten|naar|[A-Z][\w'-]+)){1,4}" + huisnr + r"(?!\d)",
+                0.55,
+            ),
+        ],
+        context=["adres", "straat", "woont", "wonende", "woonadres", "postadres"],
+    )
+    address_lc = PatternRecognizer(
+        supported_entity="NL_ADDRESS",
+        supported_language=lang,
+        global_regex_flags=IGNORE_CASE,
+        patterns=[
+            # "hoofdstraat 12", "KERKSTRAAT 4A"
+            Pattern("straat_klein", r"(?<![\w'-])[a-z][\w'-]*" + street_suffix + huisnr + r"(?!\d)", 0.55),
         ],
         context=["adres", "straat", "woont", "wonende"],
     )
-    mobile = PatternRecognizer(
+
+    class NlPhoneRecognizer(PatternRecognizer):
+        def validate_result(self, pattern_text):
+            return None if _nl_phone_digits(pattern_text) else False
+
+    psep = r"[\s.\-/)]{0,2}"
+    phone = NlPhoneRecognizer(
         supported_entity="PHONE_NUMBER",
         supported_language=lang,
-        patterns=[Pattern("nl_mobiel", r"(?<![\d+])(?:\+31|0031|0)[\s-]?6(?:[\s-]?\d){8}(?!\d)", 0.6)],
-        context=["telefoon", "tel", "mobiel", "bel", "bereikbaar"],
+        patterns=[
+            # +31 6 12345678, +31 (0)45 123 45 67, 0031-6-1234 5678, +316-12345678
+            Pattern("nl_internationaal",
+                    r"(?<![\w+])(?:\+|00)\s?31[\s.\-]?(?:\(0\)[\s.\-]?)?[1-9](?:" + psep + r"\d){8}(?!\d)", 0.65),
+            # 06-12345678, 06 12 34 56 78, (06) 1234 5678, 0612345678, 06.12.34.56.78
+            Pattern("nl_mobiel", r"(?<![\w+(])\(?06\)?(?:" + psep + r"\d){8}(?!\d)", 0.6),
+            # 045-1234567, (045) 123 45 67, 020 - 555 1234, 010/1234567
+            Pattern("nl_vast_opgemaakt",
+                    r"(?<![\w+(])\(?0[1-57-9]\d{1,2}\)?\s?[\s.\-/]\s?\d(?:[\s.\-]?\d){5,6}(?!\d)", 0.5),
+            # 0451234567 (no formatting): could be any number, only with context
+            Pattern("nl_vast_kaal", r"(?<![\w+])0[1-57-9]\d{8}(?!\d)", 0.2),
+        ],
+        context=["telefoon", "tel", "mobiel", "gsm", "bel", "bereikbaar", "phone", "telnr", "fax"],
     )
-    return [bsn, postcode, address, mobile]
+
+    class IbanRecognizer(PatternRecognizer):
+        def validate_result(self, pattern_text):
+            s = re.sub(r"[\s.\-]", "", pattern_text).upper()
+            if not 15 <= len(s) <= 34:
+                return False
+            num = "".join(str(int(c, 36)) for c in s[4:] + s[:4])
+            return True if int(num) % 97 == 1 else False
+
+    iban = IbanRecognizer(
+        supported_entity="IBAN_CODE",
+        supported_language=lang,
+        global_regex_flags=IGNORE_CASE,
+        patterns=[
+            # nl91abna0417164300, NL91 ABNA 0417 1643 00, NL91-ABNA-0417-1643-00, NL91.ABNA.0417.1643.00
+            Pattern("iban_nl", r"\bNL\d{2}[\s.\-]?[A-Z]{4}(?:[\s.\-]?\d){10}\b", 0.8),
+            Pattern("iban_be", r"\bBE\d{2}(?:[\s.\-]?\d){12}\b", 0.8),
+            Pattern("iban_de", r"\bDE\d{2}(?:[\s.\-]?\d){18}\b", 0.8),
+        ],
+    )
+
+    email_obf = PatternRecognizer(
+        supported_entity="EMAIL_ADDRESS",
+        supported_language=lang,
+        global_regex_flags=IGNORE_CASE,
+        patterns=[
+            # jan [at] bedrijf [dot] nl, jan(at)bedrijf.nl, jan @ bedrijf . nl
+            Pattern("email_verhuld",
+                    r"\b[\w.+-]+\s?(?:\[at\]|\(at\)|\{at\}|\s@\s)\s?[\w-]+"
+                    r"(?:\s?(?:\[dot\]|\(dot\)|\{dot\}|\.|\spunt\s)\s?[\w-]+)+\b", 0.6),
+        ],
+    )
+
+    months = (r"(?:jan(?:uari)?|feb(?:ruari)?|maart|mrt|apr(?:il)?|mei|jun(?:i)?|jul(?:i)?|aug(?:ustus)?|"
+              r"sep(?:t(?:ember)?)?|okt(?:ober)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|"
+              r"january|february|march|may|june|july|august|october|december)")
+    dob = PatternRecognizer(
+        supported_entity="DATE_OF_BIRTH",
+        supported_language=lang,
+        global_regex_flags=IGNORE_CASE,
+        patterns=[
+            Pattern("datum_dmj", r"\b\d{1,2}[-/.]\d{1,2}[-/.](?:19|20)\d{2}\b", 0.15),
+            Pattern("datum_jmd", r"\b(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\b", 0.15),
+            Pattern("datum_tekst", r"\b\d{1,2}\s" + months + r"\.?\s(?:19|20)\d{2}\b", 0.15),
+        ],
+        context=["geboren", "geb", "geboortedatum", "gebdatum", "geboorte", "verjaardag", "jarig",
+                 "dob", "birth", "born", "birthday", "leeftijd"],
+    )
+
+    recognizers = [bsn, postcode, postcode_lc, address, address_lc, phone, iban, email_obf, dob]
+
+    places = _place_names()
+    clear = [n for n in places if n not in AMBIGUOUS_PLACES and len(n) > 4]
+    ambiguous = [n for n in places if n in AMBIGUOUS_PLACES or len(n) <= 4]
+
+    def gazetteer(items, score, name):
+        alt = "|".join(re.escape(n) for n in sorted(items, key=len, reverse=True))
+        return Pattern(name, rf"(?<![\w'-])(?:{alt})(?![\w'-])", score)
+
+    if places:
+        recognizers.append(PatternRecognizer(
+            supported_entity="LOCATION",
+            supported_language=lang,
+            global_regex_flags=CASE_SENSITIVE,
+            patterns=[gazetteer(clear, 0.55, "woonplaats"), gazetteer(ambiguous, 0.2, "woonplaats_dubbelzinnig")],
+            context=["woonplaats", "woont", "wonend", "wonende", "plaats", "verhuisd", "geboorteplaats",
+                     "adres"],
+        ))
+    return recognizers
 
 
 def build_analyzer(languages: list[str]):
@@ -239,7 +399,9 @@ class Filter:
         self.cfg = config or load_config()
         self.language = language or self.cfg.get("default_language", "nl")
         self.analyzer = build_analyzer([self.language])
-        self.entities = self.cfg["entities"]
+        self.entities = list(self.cfg["entities"])
+        if "DATE_OF_BIRTH" not in self.entities and self.cfg.get("detect_birthdates", True):
+            self.entities.append("DATE_OF_BIRTH")
         self.threshold = float(self.cfg.get("score_threshold", 0.5))
         self.allow_list = self.cfg.get("allow_list", [])
         self.column_hints = [(re.compile(p, re.I), ent)
@@ -304,8 +466,10 @@ class Filter:
         out = [list(r) for r in body]
         for ri, row in enumerate(body):
             for ci, cell in enumerate(row):
-                if not cell or not str(cell).strip() or TOKEN_RE.fullmatch(str(cell)):
+                if not cell or not str(cell).strip() or TOKEN_RE.fullmatch(str(cell).strip()):
                     continue
+                if re.fullmatch(r"[\s\-:=_.|]+|n/?a|null|none|onbekend|-", str(cell).strip(), re.I):
+                    continue  # markdown separator rows, empty markers
                 ent = hints[ci] if ci < len(hints) else None
                 if ent:
                     out[ri][ci] = vault.token_for(ent, str(cell))
@@ -367,11 +531,65 @@ def read_text(path: Path) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def looks_tabular(text: str, flt: Filter | None = None) -> str | None:
+    """Delimiter if a non-.csv text is really a table (header + rows), else None.
+
+    ';', tab and '|' are rare in prose: 2 lines with the same count suffice.
+    ',' is common in prose: needs 3+ consistent lines and a header that matches a column hint.
+    """
+    lines = [l for l in text.splitlines()[:30] if l.strip()]
+    if len(lines) < 2:
+        return None
+    for d in (";", "\t", "|", ","):
+        n = lines[0].strip().strip("|").count(d)
+        if n < 1:
+            continue
+        same = sum(1 for l in lines[1:] if l.strip().strip("|").count(d) == n)
+        if same < max(1, int(0.8 * (len(lines) - 1))):
+            continue
+        header = [c.strip() for c in lines[0].strip().strip("|").split(d)]
+        hinted = flt is not None and any(flt._hint_for(h) for h in header)
+        if d == ",":
+            if len(lines) >= 3 and hinted:
+                return d
+            continue
+        if hinted or all(h and not re.search(r"\d", h) for h in header):
+            return d
+    return None
+
+
+def _render_table(rows: list[list[str]]) -> str:
+    return "".join("\t".join(c.replace("\t", " ") for c in r) + "\n" for r in rows)
+
+
+def filter_document(flt: Filter, src: Path, dst: Path, vault: Vault, max_lines: int | None = None) -> dict:
+    """pdf/docx/pptx/xlsx/odf -> extracted, pseudonymised plain text in dst."""
+    import pii_extract
+
+    ex = pii_extract.extract(src, max_lines=max_lines)
+    parts = [f"[pii-filter: tekst uit {src.name}, gepseudonimiseerd; opmaak en afbeeldingen zijn weggelaten]\n"]
+    for kind, content in ex.blocks:
+        if kind == "table":
+            parts.append(_render_table(flt.filter_rows(content, vault, has_header=True)))
+        else:
+            parts.append(flt.filter_text(content, vault))
+    for n in ex.notes:
+        parts.append(f"\n[pii-filter: {n}]\n")
+    dst.write_text("".join(parts), encoding="utf-8")
+    return {"replacements": sum(flt.counts.values()), "by_entity": dict(flt.counts),
+            "truncated": any("afgekapt" in n for n in ex.notes), "document": True,
+            "pages": ex.pages, "unreadable_pages": ex.unreadable_pages}
+
+
 def filter_file(flt: Filter, src: Path, dst: Path, vault: Vault, max_lines: int | None = None) -> dict:
     """Write a pseudonymised copy of src to dst. Returns stats."""
+    import pii_extract
+
     ext = src.suffix.lower()
     truncated = False
-    if ext in (".xlsx", ".xlsm"):
+    if ext in pii_extract.DOC_EXTENSIONS and not (ext in (".xlsx", ".xlsm") and dst.suffix.lower() == ext):
+        return filter_document(flt, src, dst, vault, max_lines=max_lines)
+    if ext in (".xlsx", ".xlsm"):  # CLI: anonymize x.xlsx -o y.xlsx keeps the workbook
         flt.filter_xlsx(src, dst, vault, max_rows=max_lines)
     else:
         text = read_text(src)
@@ -379,8 +597,9 @@ def filter_file(flt: Filter, src: Path, dst: Path, vault: Vault, max_lines: int 
             lines = text.splitlines(keepends=True)
             if len(lines) > max_lines:
                 text, truncated = "".join(lines[:max_lines]), True
-        if ext in TABULAR:
-            out = flt.filter_csv_text(text, vault, delimiter="\t" if ext == ".tsv" else None)
+        delim = ("\t" if ext == ".tsv" else None) if ext in TABULAR else looks_tabular(text, flt)
+        if ext in TABULAR or delim:
+            out = flt.filter_csv_text(text, vault, delimiter=delim)
         else:
             out = flt.filter_text(text, vault)
         if truncated:
