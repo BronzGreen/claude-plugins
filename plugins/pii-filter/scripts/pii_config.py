@@ -20,7 +20,22 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT") or Path(__file__).resolve().parent.parent)
 HOME_CLAUDE = Path.home() / ".claude"
-DATA_DIR = Path(os.environ.get("CLAUDE_PLUGIN_DATA") or HOME_CLAUDE / "pii-filter")
+def _data_dir() -> Path:
+    """Plugin data dir. Hooks get CLAUDE_PLUGIN_DATA; the CLI called from a shell does not,
+    so derive it from the venv we run in (<data>/venv) or find the installed plugin's data dir."""
+    env = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if env:
+        return Path(env)
+    prefix = Path(sys.prefix)
+    if prefix.name == "venv" and (prefix.parent / "ready.json").exists():
+        return prefix.parent
+    for cand in sorted((HOME_CLAUDE / "plugins" / "data").glob("pii-filter*")):
+        if (cand / "ready.json").exists():
+            return cand
+    return HOME_CLAUDE / "pii-filter"
+
+
+DATA_DIR = _data_dir()
 VENV_DIR = DATA_DIR / "venv"
 READY_MARKER = DATA_DIR / "ready.json"
 SETUP_LOG = DATA_DIR / "setup-log.txt"
