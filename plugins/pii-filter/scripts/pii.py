@@ -124,6 +124,53 @@ def cmd_status(a):
     }, indent=1))
 
 
+def cmd_report_leak(a):
+    """Manual datalek report (skill datalek-melden). Never pass the leaked values themselves."""
+    import pii_leak as leak
+
+    counts = {}
+    for part in filter(None, (a.types or "").split(",")):
+        k, _, n = part.partition("=")
+        counts[k.strip().upper()] = set(range(int(n or 1)))
+    note = (a.note or "").strip()
+    found_in_note = leak.detect(note, pc.load_config(a.project or os.getcwd()))
+    if found_in_note:
+        sys.exit("de toelichting bevat zelf persoonsgegevens (" + ", ".join(found_in_note) +
+                 "); beschrijf alleen wat voor gegevens het waren, niet de gegevens zelf")
+    source = {"tool": a.source or "handmatig", "ext": (a.ext or "").lstrip(".") or None,
+              "project": Path(a.project or os.getcwd()).name, "session_id": a.session or "",
+              "plugin_version": json.loads((pc.PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
+                                           .read_text("utf-8")).get("version", "?"),
+              "automatic": False}
+    report = leak.build_report(counts, source, note=note)
+    leak.enqueue(report)
+    res = leak.flush()
+    sent = any(r["local_ref"] == report["local_ref"] for r in res["sent"])
+    print(json.dumps({"referentie": report["body"]["referentie"],
+                      "status": "geregistreerd in BRIDGE" if sent else "in lokale wachtrij",
+                      "fout": None if sent else res["error"],
+                      "termijn_uiterlijk": next((r.get("termijn_uiterlijk") for r in res["sent"]
+                                                 if r["local_ref"] == report["local_ref"]), None)},
+                     ensure_ascii=False))
+
+
+def cmd_leaks(a):
+    import pii_leak as leak
+
+    if a.flush:
+        print(json.dumps(leak.flush(), ensure_ascii=False, default=str))
+        return
+    pat, api = leak.credentials()
+    sent = []
+    if leak.SENT_LOG.exists():
+        for line in leak.SENT_LOG.read_text(encoding="utf-8").splitlines()[-20:]:
+            r = json.loads(line)
+            sent.append({k: r.get(k) for k in ("referentie", "sent", "termijn_uiterlijk")})
+    queue = sorted(p.name for p in leak.QUEUE_DIR.glob("*.json")) if leak.QUEUE_DIR.exists() else []
+    print(json.dumps({"bridge_api": api, "token_ingesteld": bool(pat), "token_bestand": str(leak.ENV_FILE),
+                      "wachtrij": queue, "laatst_verzonden": sent}, ensure_ascii=False, indent=1))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     common = argparse.ArgumentParser(add_help=False)
@@ -141,6 +188,17 @@ def main():
     s = sub.add_parser("vault", parents=[common]); s.add_argument("action", choices=["stats", "clear"])
     s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_vault)
     s = sub.add_parser("status", parents=[common]); s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("report-leak", parents=[common],
+                       help="datalek handmatig melden in BRIDGE (zonder de gegevens zelf)")
+    s.add_argument("--types", help="bv. PERSON=2,EMAIL_ADDRESS=1")
+    s.add_argument("--source", help="hoe het binnenkwam, bv. 'Read', 'Bash-output', 'plak in chat'")
+    s.add_argument("--ext", help="bestandstype, bv. csv")
+    s.add_argument("--note", help="korte toelichting ZONDER persoonsgegevens")
+    s.add_argument("--session", help="sessie-id (optioneel)")
+    s.set_defaults(fn=cmd_report_leak)
+    s = sub.add_parser("leaks", parents=[common], help="meldingen: wachtrij, verzonden, token-status")
+    s.add_argument("--flush", action="store_true", help="wachtrij nu versturen")
+    s.set_defaults(fn=cmd_leaks)
 
     a = p.parse_args()
     if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
