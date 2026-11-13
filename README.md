@@ -8,7 +8,7 @@ this repository can install from it.
 | `ai-dev-team` | The AI Dev Team framework's 35 agents (`ai-dev-team:architect`, `ai-dev-team:backend-dev`, …) and its skills, from `BronzGreen/AI-Dev-Team`, pinned to a release tag |
 | `plaud-kit` | Plaud recordings → BRIDGE board cards (`/plaud-kit:plaud-inbox`), meeting digests (`/plaud-kit:plaud-digest`), meeting-vs-docs checks (`/plaud-kit:plaud-to-docs`) |
 | `common-base` | Keeps `BronzGreen/common-base` the one home of shared platform code in **every** project: `/common-base:waar-hoort-dit` (common-base or product?), `/common-base:nieuw-product` (start a new product on common-base, reuse before building), `/common-base:upstream-pr` (open the neutral common-base PR for a change a product needs) and `/common-base:release-sweep` (after a human merges: tag, CVS bump, product pin bumps), agent `common-base:placement`, a guard that blocks edits to installed `@bronzgreen/*` / Go-module-cache copies, and a session note that puts the rule in force in every BronzGreen repo. Install it globally (user scope) so it also applies to new projects. |
-| `pii-filter` | Automatic, local PII filtering with Microsoft Presidio (Dutch + English). Reading a data file (csv/json/log/eml/txt/sql/xml) that contains personal data gives Claude a pseudonymised copy (`<PERSON_1>`, `<NL_BSN_1>`, …); raw shell/Grep views of data files are blocked; the local vault with real values is off-limits. Applies to subagents too. Code files are never touched. Install it globally (user scope). See [pii-filter](#pii-filter). |
+| `pii-filter` | Automatic, local PII filtering with Microsoft Presidio (Dutch + English). Reading a data file (csv/json/log/eml/txt/sql/xml) that contains personal data gives Claude a pseudonymised copy (`<PERSON_1>`, `<NL_BSN_1>`, …); raw shell/Grep views of data files are blocked; the local vault with real values is off-limits; personal data that still slips through is reported automatically as a datalek in BRIDGE ISMS (`/pii-filter:datalek-melden` for manual reports). Applies to subagents too. Code files are never touched. Install it globally (user scope). See [pii-filter](#pii-filter). |
 ## Install (once per machine)
 
 Claude Code clones this repository and `BronzGreen/AI-Dev-Team` with `git`, without
@@ -184,9 +184,49 @@ Users still need read access to this repo plus `gh auth setup-git` (see Install)
 Claude Code and the Agent SDK (load the plugin with `plugins=[{"type": "local", "path": …}]`); claude.ai chat,
 desktop chat and mobile are not covered.
 
+### Datalek reporting (BRIDGE ISMS)
+A second check runs **after** every Read of a data file and every shell command that touches one: it scans what
+the model actually received for hard identifiers (e-mail address, IBAN with valid checksum, BSN passing the
+11-proef next to a BSN keyword, Dutch mobile number). On a hit it automatically creates an AVG datalek in
+BRIDGE → ISMS → Datalekken (`aard: vertrouwelijkheid`, `rol` and `meldbeslissing`: *nog te bepalen*,
+`status: open`), and BRIDGE e-mails the tenant's privacy officer. The 72-hour clock is then visible in the register.
+- The report holds **counts per type, project name, file type, timestamp, session and plugin version**, never
+  the values and never the file path. Path ↔ reference stays local in the plugin data dir (`leaks/sent.jsonl`).
+- One report per file per session. If BRIDGE is unreachable or no token is set, the report waits in a local
+  queue and is sent at the next session start.
+- Names, addresses and other things the automatic check can't see: Claude uses the skill
+  `/pii-filter:datalek-melden` (asks you first, then `pii.py report-leak`).
+
+**One-time setup per person: a BRIDGE token** with scope `isms.datalek.melden` (report-only, every employee
+has it). Log in to https://bridge.bronzgreen.com, open the browser DevTools console and run:
+```js
+(async () => {
+  const res = await fetch("/api/v1/auth/tokens", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${localStorage.getItem("bridge_access_token")}`,
+      "X-Session-ID": localStorage.getItem("bridge_session_id"),
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify({ name: "pii-filter", scopes: ["isms.datalek.melden"], expires_in_days: 365 }),
+  });
+  const data = await res.json().catch(() => ({}));
+  console.log(res.ok ? data.token : `Mint failed ${res.status}: ${JSON.stringify(data)}`);
+})();
+```
+Store it (never in a repo) in `~/.config/pii-filter/env`:
+```
+BRIDGE_PAT=bgp_paste_here
+BRIDGE_API_BASE=https://bridge.bronzgreen.com
+```
+macOS/Linux: `chmod 600 ~/.config/pii-filter/env`. Check with Claude: "draai pii.py leaks".
+The privacy officer is set per tenant in BRIDGE under ISMS (*Privacy officer (FG)*).
+
 ### Limits
 Detection is statistical: a name can slip through or a word gets replaced needlessly. A script that prints
 records itself, MCP tools and WebFetch are outside the hooks. Treat it as a strong safety net, not a guarantee.
+The automatic datalek check only sees hard identifiers; it will not notice a leaked name on its own.
 
 ## Data rules (built into the skills)
 
