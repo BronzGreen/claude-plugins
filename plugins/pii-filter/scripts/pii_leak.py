@@ -234,7 +234,7 @@ def detect(text: str, cfg: dict, details: list | None = None) -> dict:
 def describe(found: dict, details: list | None = None) -> str:
     """'naam 1x (kolom 'Naam'), postcode 1x (kolom 'postcode')' -- types and where, never values."""
     parts = []
-    for k in sorted(found):
+    for k in _ordered(found):
         bases = sorted({d["basis"] for d in (details or []) if d["type"] == k})
         where = f" ({', '.join(bases)})" if bases else ""
         parts.append(f"{LABELS.get(k, k)} {len(found[k])}x{where}")
