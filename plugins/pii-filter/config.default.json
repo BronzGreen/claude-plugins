@@ -1,4 +1,5 @@
 {
+  "_comment": "Zie README pii-filter. hook.scan_all_files: ook code/markdown/html/onbekende tekst wordt snel gecontroleerd en bij harde kenmerken (e-mail, IBAN, BSN, 06-nummer) of een persoonsgegevens-tabel volledig gefilterd. leak_check.verwerkersovereenkomst_anthropic: true/false/null, gebruikt voor de inschatting van de meldplicht.",
   "enabled": true,
   "default_language": "nl",
   "score_threshold": 0.5,
@@ -19,7 +20,17 @@
     "BRIDGE",
     "FlameTales",
     "Claude",
-    "Presidio"
+    "Presidio",
+    "BSN",
+    "IBAN",
+    "KvK",
+    "BTW",
+    "AVG",
+    "GDPR",
+    "ISMS",
+    "Postcode",
+    "Woonplaats",
+    "Naam"
   ],
   "column_hints": {
     "(voor|achter|roep|volledige|klant|contact|medewerker)?naam|(first|last|full|given|family|sur)?name|tussenvoegsels?|contactpersoon|initialen|voorletters": "PERSON",
@@ -57,7 +68,16 @@
       ".sql",
       ".log",
       ".jsonl",
-      ".ndjson"
+      ".ndjson",
+      ".pdf",
+      ".docx",
+      ".docm",
+      ".pptx",
+      ".odt",
+      ".ods",
+      ".txt",
+      ".json",
+      ".xml"
     ],
     "exclude_globs": [
       "*/node_modules/*",
@@ -97,10 +117,31 @@
     "max_bytes": 25000000,
     "fail_mode": "closed",
     "block_shell_viewers": true,
-    "block_grep_content": true
+    "block_grep_content": true,
+    "scan_all_files": true,
+    "prescan_max_bytes": 5000000,
+    "block_images": false,
+    "grep_block_extensions": [
+      ".csv",
+      ".xlsx",
+      ".xlsm",
+      ".xls",
+      ".eml",
+      ".vcf",
+      ".sql",
+      ".log",
+      ".jsonl",
+      ".ndjson",
+      ".tsv",
+      ".pdf",
+      ".docx",
+      ".pptx"
+    ]
   },
   "leak_check": {
     "enabled": true,
-    "ignore_email_domains": []
-  }
+    "ignore_email_domains": [],
+    "verwerkersovereenkomst_anthropic": null
+  },
+  "detect_birthdates": true
 }

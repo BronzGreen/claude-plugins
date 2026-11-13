@@ -113,14 +113,26 @@ def is_enabled(cfg: dict) -> bool:
     return bool(cfg.get("enabled", True))
 
 
-def sanitized_path(src: Path, max_lines: int | None, cfg_fingerprint: str = "") -> Path:
+def sanitized_path(src: Path, max_lines: int | None, cfg_fingerprint: str = "", out_suffix: str = "") -> Path:
+    """Cache path of the pseudonymised copy. out_suffix='.txt' for documents (pdf/docx/...)
+    that are delivered as extracted text: report.pdf -> report.pii-sanitized.<h>.pdf.txt"""
     st = src.stat()
     key = f"{src.resolve()}|{st.st_mtime_ns}|{st.st_size}|{max_lines}|{cfg_fingerprint}"
     h = hashlib.sha1(key.encode()).hexdigest()[:10]
-    return CACHE_DIR / f"{src.stem}.pii-sanitized.{h}{src.suffix}"
+    return CACHE_DIR / f"{src.stem}.pii-sanitized.{h}{src.suffix}{out_suffix}"
+
+
+def plugin_version() -> str:
+    try:
+        return json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text("utf-8"))["version"]
+    except (OSError, ValueError, KeyError):
+        return "?"
 
 
 def config_fingerprint(cfg: dict) -> str:
+    """Changes when the config OR the plugin version changes, so better recognizers
+    never reuse a copy that an older version filtered."""
     relevant = {k: cfg.get(k) for k in ("entities", "allow_list", "column_hints", "score_threshold",
-                                        "default_language")}
+                                        "default_language", "detect_birthdates")}
+    relevant["_version"] = plugin_version()
     return hashlib.sha1(json.dumps(relevant, sort_keys=True).encode()).hexdigest()[:8]

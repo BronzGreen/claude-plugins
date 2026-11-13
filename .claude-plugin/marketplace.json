@@ -23,7 +23,7 @@
     {
       "name": "pii-filter",
       "source": "./plugins/pii-filter",
-      "description": "Automatic local PII filtering (Microsoft Presidio, NL+EN): data files reach Claude pseudonymised, raw views of data files are blocked"
+      "description": "Automatic local PII filtering (Microsoft Presidio, NL+EN): every file Claude reads (data, pdf/docx/xlsx, code) reaches it pseudonymised, raw views of data files are blocked, leaks are reported to BRIDGE with a meldplicht assessment"
     },
     {
       "name": "common-base",

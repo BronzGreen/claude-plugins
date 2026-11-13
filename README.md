@@ -8,7 +8,7 @@ this repository can install from it.
 | `ai-dev-team` | The AI Dev Team framework's 35 agents (`ai-dev-team:architect`, `ai-dev-team:backend-dev`, …) and its skills, from `BronzGreen/AI-Dev-Team`, pinned to a release tag |
 | `plaud-kit` | Plaud recordings → BRIDGE board cards (`/plaud-kit:plaud-inbox`), meeting digests (`/plaud-kit:plaud-digest`), meeting-vs-docs checks (`/plaud-kit:plaud-to-docs`) |
 | `common-base` | Keeps `BronzGreen/common-base` the one home of shared platform code in **every** project: `/common-base:waar-hoort-dit` (common-base or product?), `/common-base:nieuw-product` (start a new product on common-base, reuse before building), `/common-base:upstream-pr` (open the neutral common-base PR for a change a product needs) and `/common-base:release-sweep` (after a human merges: tag, CVS bump, product pin bumps), agent `common-base:placement`, a guard that blocks edits to installed `@bronzgreen/*` / Go-module-cache copies, and a session note that puts the rule in force in every BronzGreen repo. Install it globally (user scope) so it also applies to new projects. |
-| `pii-filter` | Automatic, local PII filtering with Microsoft Presidio (Dutch + English). Reading a data file (csv/json/log/eml/txt/sql/xml) that contains personal data gives Claude a pseudonymised copy (`<PERSON_1>`, `<NL_BSN_1>`, …); raw shell/Grep views of data files are blocked; the local vault with real values is off-limits; personal data that still slips through is reported automatically as a datalek in BRIDGE ISMS (`/pii-filter:datalek-melden` for manual reports). Applies to subagents too. Code files are never touched. Install it globally (user scope). See [pii-filter](#pii-filter). |
+| `pii-filter` | Automatic, local PII filtering with Microsoft Presidio (Dutch + English). Every file Claude reads is checked: data files (csv/json/log/eml/txt/sql/xml), documents (pdf/docx/pptx/xlsx) and code/markdown with personal data give Claude a pseudonymised copy (`<PERSON_1>`, `<NL_BSN_1>`, …), in many Dutch spellings of phone numbers, postcodes, BSN's, IBAN's and addresses; raw shell/Grep views of data files are blocked; the local vault with real values is off-limits; personal data that still slips through is reported automatically as a datalek in BRIDGE ISMS, stating what leaked, how, and an assessment of the meldplicht (`/pii-filter:datalek-melden` for manual reports). Applies to subagents too. Install it globally (user scope). See [pii-filter](#pii-filter). |
 ## Install (once per machine)
 
 Claude Code clones this repository and `BronzGreen/AI-Dev-Team` with `git`, without
@@ -136,15 +136,39 @@ Optional daily digest from cron/launchd: `claude -p "/plaud-kit:plaud-digest tod
 ## pii-filter
 
 ### What happens
-- **Read** of `.csv .tsv .txt .log .json .jsonl .ndjson .xml .eml .sql .vcf`: Presidio scans the file locally.
+Every file Claude reads is checked (since 0.3.0):
+- **Data files** `.csv .tsv .txt .log .json .jsonl .ndjson .xml .eml .sql .vcf`: Presidio scans the file locally.
   If it contains personal data, Claude reads a pseudonymised copy instead (`Jan de Vries` → `<PERSON_1>`;
   the same value gets the same token everywhere, so relations survive). Clean files are read as-is.
-- **Bash / PowerShell** commands that print a data file (`cat`, `head`, `Get-Content`, `Import-Csv`, `grep`, `jq`, …)
-  and **Grep** with `output_mode: content` on data files are refused with a pointer to the CLI.
+  A `.txt`/`.log` that is really a table (header row + `;`, tab or `|`) is treated as one, so column names count.
+- **Documents** `.pdf .docx .pptx .xlsx .odt .ods`: text (incl. tables, headers/footers, comments, speaker notes)
+  is extracted and filtered; Claude reads a `.txt` version. A clean PDF is read as-is. A PDF with only scanned
+  pages (no text layer) is refused; scanned pages in a mixed PDF are skipped and named.
+- **Everything else** (code, markdown, html, yaml, unknown text): a fast check for hard identifiers (a person's
+  e-mail address, IBAN, BSN, Dutch mobile / +31 number) and personal-data tables; on a hit the file is fully
+  filtered as above. Role mailboxes (`info@`, `noreply@`), test domains (`.test`, `example.com`) and well-known
+  example numbers (`06-12345678`, the Wikipedia IBAN, BSN `123456782`) don't count. Measured on our repos: 1–2.5%
+  of text files are redirected, mostly test fixtures with personal-looking e-mail addresses.
+- Images are passed through (no OCR); set `hook.block_images: true` to refuse them.
+- **Bash / PowerShell** commands that print a data or document file (`cat`, `head`, `Get-Content`, `Import-Csv`,
+  `grep`, `jq`, `pdftotext`, `pandoc`, …) and **Grep** with `output_mode: content` on data files are refused
+  with a pointer to the CLI. Excluded files (`requirements.txt`, `package.json`, …) stay allowed.
 - The **vault** with real values (`~/.claude/pii-vault/`) is never readable by Claude. Restoring real values
   (`pii.py deanonymize … -o file`) only writes to a file.
-- Code and config (`package.json`, `tsconfig`, `node_modules`, `.claude/`, …) are never filtered.
+- Dependencies and tool config (`node_modules`, `.git`, `.claude/`, `package.json`, `tsconfig`, lockfiles, …)
+  are excluded (`hook.exclude_globs`).
 - Hooks also apply to subagents. Nothing leaves the machine.
+
+Recognised, in many spellings: names and places (spaCy + the CBS list of 2,426 Dutch woonplaatsen), e-mail
+(also `jan [at] x [dot] nl`), phone (`06-…`, `06 12 34 56 78`, `(06) …`, `+31 (0)6 …`, `0031 …`, `045-…`,
+`(045) …`), IBAN (lower case, dots, dashes), BSN (`1234.56.782`, `123-45-678`, `123 456 782`, 8 digits with
+context), postcode (`1234 AB`, `1234AB`, `1234-AB`, `1234ab`), addresses (`hoofdstraat 12a`, `Hoofdstr. 12`,
+`Kerkplein 4-II`, `Molenweg 8 bus 3`, `Laan van Meerdervoort 120`) and birth dates next to "geboren"/"geb.".
+See `plugins/pii-filter/tests/test_formats.py`.
+
+**Trade-off:** a code or markdown file that is redirected can't be edited with `Edit` (a redirected Read doesn't
+count as reading the original). For fictional test data, add the path to `hook.exclude_globs` or the test domain
+to `leak_check.ignore_email_domains` in the project's `.pii-filter.json`.
 
 ### Requirements and first run
 Git Bash on Windows (same as `common-base`) and either [uv](https://docs.astral.sh/uv/)
@@ -185,17 +209,34 @@ Claude Code and the Agent SDK (load the plugin with `plugins=[{"type": "local", 
 desktop chat and mobile are not covered.
 
 ### Datalek reporting (BRIDGE ISMS)
-A second check runs **after** every Read of a data file and every shell command that touches one: it scans what
-the model actually received for hard identifiers (e-mail address, IBAN with valid checksum, BSN passing the
-11-proef next to a BSN keyword, Dutch mobile number). On a hit it automatically creates an AVG datalek in
+A second check runs **after** every Read, every shell command that touches a data/document file and every
+Grep in content mode: it scans what the model actually received for hard identifiers (a person's e-mail address,
+IBAN with valid checksum, BSN passing the 11-proef next to a BSN keyword, Dutch mobile / +31 number, landline
+next to "tel") and for tables whose personal columns (`Naam`, `adres`, `postcode`, `woonplaats`,
+`geboortedatum`, …) hold plain values. On a hit it automatically creates an AVG datalek in
 BRIDGE → ISMS → Datalekken (`aard: vertrouwelijkheid`, `rol` and `meldbeslissing`: *nog te bepalen*,
 `status: open`), and BRIDGE e-mails the tenant's privacy officer. The 72-hour clock is then visible in the register.
-- The report holds **counts per type, project name, file type, timestamp, session and plugin version**, never
-  the values and never the file path. Path ↔ reference stays local in the plugin data dir (`leaks/sent.jsonl`).
+- In the register overview each report is one line, **WAT · HOE · bij WIE**, e.g.
+  `Naam, postcode, woonplaats · Read testdata.txt (filter miste) · bij Sanne de Wit`, reference
+  `DL-AI-<date>-<4 letters>`. The toelichting has fixed headings: WAT (type, count, where: `Naam: 1 (kolom 'Naam')`),
+  HOE (route, file name and type, project), BIJ WIE (employee, workstation, session, recipient Anthropic),
+  INSCHATTING MELDPLICHT, OVERIG. Never the values themselves (the register must not hold identifying data);
+  the full path stays local in the plugin data dir (`leaks/sent.jsonl`).
+- "Bij wie" is the employee: the owner of the BRIDGE token (looked up once via `/api/v1/auth/me` and cached),
+  or `MELDER=Voornaam Achternaam` in `~/.config/pii-filter/env`.
+- Every report carries an **assessment of the meldplicht** (AVG art. 33/34): *niet melden* / *beoordelen* /
+  *wel melden*, with reasons and whether data subjects should be informed. Rule of thumb built in: own test data
+  → niet melden; BSN/credit card at 10+ people → wel melden; BSN/credit card, IBAN/birth dates at 10+, or 100+
+  people → beoordelen; a few contact details at processor Anthropic → niet melden (but registered). Set
+  `leak_check.verwerkersovereenkomst_anthropic` to `true`/`false` to sharpen it. It is advice: BRIDGE keeps
+  `meldbeslissing` *nog te bepalen* until the privacy officer decides.
 - One report per file per session. If BRIDGE is unreachable or no token is set, the report waits in a local
   queue and is sent at the next session start.
 - Names, addresses and other things the automatic check can't see: Claude uses the skill
-  `/pii-filter:datalek-melden` (asks you first, then `pii.py report-leak`).
+  `/pii-filter:datalek-melden` (asks you first, then `pii.py report-leak` with `--waar`, `--file-name`,
+  `--eigen-gegevens` and its own `--advies` + `--motivering`).
+- To try it without touching production, point `BRIDGE_API_BASE` at `https://test.bridge.bronzgreen.com`
+  (with a token minted there).
 
 **One-time setup per person: a BRIDGE token** with scope `isms.datalek.melden` (report-only, every employee
 has it). Log in to https://bridge.bronzgreen.com, open the browser DevTools console and run:
@@ -224,9 +265,10 @@ macOS/Linux: `chmod 600 ~/.config/pii-filter/env`. Check with Claude: "draai pii
 The privacy officer is set per tenant in BRIDGE under ISMS (*Privacy officer (FG)*).
 
 ### Limits
-Detection is statistical: a name can slip through or a word gets replaced needlessly. A script that prints
-records itself, MCP tools and WebFetch are outside the hooks. Treat it as a strong safety net, not a guarantee.
-The automatic datalek check only sees hard identifiers; it will not notice a leaked name on its own.
+Detection is statistical: a name can slip through (especially a lone first name in free text) or a word gets
+replaced needlessly. A script that prints records itself, MCP tools, WebFetch and text inside images are outside
+the hooks. Treat it as a strong safety net, not a guarantee. The automatic datalek check sees hard identifiers and
+personal-data tables; it will not notice a leaked name in free text on its own.
 
 ## Data rules (built into the skills)
 
@@ -245,8 +287,10 @@ The automatic datalek check only sees hard identifiers; it will not notice a lea
 - Write every git-based plugin source as a full `https://github.com/…git` URL, never the
   `owner/repo` shorthand: the shorthand makes Claude Code try SSH first, which breaks
   installs on machines without a GitHub SSH key (most Windows setups).
-- `pii-filter`: run `python plugins/pii-filter/tests/test_hook_shell.py` and
-  `python plugins/pii-filter/tests/test_hook_e2e.py <plugin-data-dir>` (after `scripts/setup.sh`), then bump
+- `pii-filter`: run `python plugins/pii-filter/tests/test_hook_shell.py`, and with the plugin venv python
+  `tests/test_formats.py`, `tests/test_leak.py` and `tests/test_hook_e2e.py <plugin-data-dir>` (after
+  `scripts/setup.sh`). Test data must be fictional; use non-placeholder values (the leak check ignores
+  `06-12345678`, `NL91ABNA0417164300`, BSN `123456782` on purpose). Then bump
   `version` in its `plugin.json`. Bumping `scripts/requirements.txt` makes every machine reinstall on next start.
 - `plaud-kit`: bump `version` in `plugins/plaud-kit/.claude-plugin/plugin.json` to release.
 - `ai-dev-team`: edit `.claude/agents/` or `skills/` in `BronzGreen/AI-Dev-Team`, run

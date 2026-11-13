@@ -15,10 +15,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-LEAKY = ("Contact: piet.pietersen@bedrijf-x.nl, IBAN NL91ABNA0417164300, BSN 123456782, "
-         "mobiel 06-12345678. Al gefilterd: <PERSON_1> <EMAIL_ADDRESS_2>. Test: a@example.com, "
+LEAKY = ("Contact: piet.pietersen@bedrijf-x.nl, IBAN NL68RABO0312874659, BSN 293847502, "
+         "mobiel 06-29384756. Al gefilterd: <PERSON_1> <EMAIL_ADDRESS_2>. Test: a@example.com, "
          "ordernr 987654321, rekening NL00XXXX0000000000.")
-SECRET_VALUES = ["piet.pietersen", "bedrijf-x", "NL91ABNA0417164300", "123456782", "12345678"]
+SECRET_VALUES = ["piet.pietersen", "bedrijf-x", "NL68RABO0312874659", "293847502", "29384756"]
 
 received = []
 
@@ -65,7 +65,7 @@ def main():
         env = {k: v for k, v in os.environ.items() if not k.startswith(("PII_", "CLAUDE_PLUGIN"))}
         env.update({"CLAUDE_PLUGIN_ROOT": str(ROOT), "CLAUDE_PLUGIN_DATA": str(tmp / "data"),
                     "PII_VAULT_DIR": str(tmp / "vault"), "PII_FILTER_ENV": str(tmp / "noenv"),
-                    "PII_BRIDGE_API_BASE": api, "PII_BRIDGE_PAT": "bgp_test"})
+                    "PII_BRIDGE_API_BASE": api, "PII_BRIDGE_PAT": "bgp_test", "PII_FILTER_MELDER": "Test Melder"})
         os.environ.update(env)
         import pii_leak as leak  # after env, so paths point to tmp
 
@@ -74,7 +74,7 @@ def main():
         check("detectie: e-mail/IBAN/BSN/mobiel", set(found) == {"EMAIL_ADDRESS", "IBAN_CODE", "NL_BSN", "PHONE_NUMBER"}, found)
         check("example.com, ordernummer, ongeldige IBAN en tokens genegeerd",
               {k: len(v) for k, v in found.items()} == {"EMAIL_ADDRESS": 1, "IBAN_CODE": 1, "NL_BSN": 1, "PHONE_NUMBER": 1}, found)
-        check("BSN zonder context niet gemeld", "NL_BSN" not in leak.detect("nummer 123456782", {}))
+        check("BSN zonder context niet gemeld", "NL_BSN" not in leak.detect("nummer 293847502", {}))
 
         def hook(payload, extra=None):
             r = subprocess.run([bash(), str(ROOT / "scripts" / "run-hook.sh"), "post"],
@@ -101,18 +101,28 @@ def main():
             check("verplichte velden", all(b.get(k) for k in ("referentie", "samenvatting", "geconstateerd_op", "aard", "rol")), b)
             check("rol/meldbeslissing/status", (b["rol"], b["meldbeslissing"], b["status"]) == ("nog_te_bepalen", "nog_te_bepalen", "open"), b)
             check("GEEN persoonsgegevens in melding", not any(s.lower() in blob.lower() for s in SECRET_VALUES), blob)
-            check("geen bestandspad in melding", "export.csv" not in blob and str(tmp) not in blob, blob)
+            check("geen map/pad in melding, wel bestandsnaam", str(tmp) not in blob and str(tmp).replace("\\", "/") not in blob
+                  and "export.csv" in b["samenvatting"], blob)
+            sv = b["samenvatting"]
+            check("overzichtsregel = WAT · HOE · BIJ WIE",
+                  sv.count(" · ") == 2 and sv.startswith("BSN") and "Read export.csv" in sv and " · bij Test Melder" in sv
+                  and len(sv) <= 110, sv)
+            check("toelichting met vaste kopjes", all(h in b["toelichting"] for h in
+                  ("WAT\n", "HOE\n", "BIJ WIE\n", "INSCHATTING MELDPLICHT", "- Medewerker: Test Melder")), b["toelichting"])
+            check("referentie kort en zonder cijferreeks na de datum",
+                  re.fullmatch(r"DL-AI-\d{4}-\d{2}-\d{2}-[A-Z]{4}", b["referentie"]), b["referentie"])
             check("geen 8+ cijferreeksen (BSN-guard BRIDGE)", not re.search(r"\d{8,}", blob.replace(b["geconstateerd_op"], "")), blob)
-            check("projectnaam en aantallen staan erin", "klantproject" in b["samenvatting"] and "IBAN 1x" in b["samenvatting"], b["samenvatting"])
+            check("project en aantallen in toelichting", "project klantproject" in b["toelichting"]
+                  and "- IBAN: 1" in b["toelichting"], b["toelichting"])
 
         out, _ = hook(read_payload)
         check("zelfde bestand zelfde sessie: geen tweede melding", out == {} and len(received) == 1, (out, len(received)))
         clean = {**read_payload, "session_id": "sess-2", "tool_response": {"file": {"content": "<PERSON_1> woont in <LOCATION_2>"}}}
         out, _ = hook(clean)
         check("gefilterde output: geen melding", out == {} and len(received) == 1, out)
-        code = {**read_payload, "session_id": "sess-3", "tool_input": {"file_path": str(proj / "main.go")}}
-        out, _ = hook(code)
-        check("codebestand niet gecontroleerd", out == {}, out)
+        img = {**read_payload, "session_id": "sess-3", "tool_input": {"file_path": str(proj / "foto.png")}}
+        out, _ = hook(img)
+        check("afbeelding niet gecontroleerd", out == {}, out)
 
         # --- queue when BRIDGE refuses, flush later
         FakeBridge.status = 403
@@ -135,6 +145,71 @@ def main():
         check("handmatig melden werkt", res.get("status") == "geregistreerd in BRIDGE" and len(received) == 4, (res, r.stderr))
         if len(received) == 4:
             check("handmatig: ontdekt_door medewerker", received[3]["body"]["ontdekt_door"].startswith("Medewerker"), received[3]["body"])
+
+        # --- 0.3.0: more formats, tables, assessment, every file
+        more = ("bsn 2938.47.502 / IBAN nl68rabo0312874659 / tel +31 (0)6 2938 4756 / tel. 045-5671234\n"
+                "Naam;adres;postcode;geboortedatum\nPietje Puk;Kerkstraat 5;6461ab;12-03-1985\n")
+        det = []
+        f2 = leak.detect(more, {}, det)
+        check("detectie nieuwe schrijfwijzen + tabel",
+              {k: len(v) for k, v in f2.items()} == {"NL_BSN": 1, "IBAN_CODE": 1, "PHONE_NUMBER": 2, "PERSON": 1,
+                                                      "NL_ADDRESS": 1, "NL_POSTCODE": 1, "DATE_OF_BIRTH": 1}, f2)
+        check("kolomnaam als vindplaats", any(d["basis"] == "kolom 'Naam'" for d in det), det)
+        check("proza met komma en 'naam' is geen tabel",
+              not leak.detect("Naam, adres en woonplaats vult u zelf in.\nDaarna, als alles klopt, versturen.", {}))
+        check("voorbeeldwaarden en functionele adressen genegeerd",
+              not leak.detect("mail info@school-x.nl of noreply@bedrijf-x.nl, jan@app.test; bel 06-12345678; "
+                              "IBAN NL91ABNA0417164300; BSN 123456782", {}))
+        check("geen treffer op hashes/versies", not leak.detect("commit de12ab34ef56, v3.12.10, #1234ab, 2026-11-13", {}))
+
+        a = leak.assess({"PERSON": 1, "NL_POSTCODE": 1})
+        check("advies: weinig contactgegevens -> niet melden", a["advies"] == "niet_melden", a)
+        a = leak.assess({"NL_BSN": 1})
+        check("advies: BSN -> beoordelen", a["advies"] == "beoordelen", a)
+        a = leak.assess({"NL_BSN": 25, "PERSON": 25})
+        check("advies: veel BSN's -> wel melden + betrokkenen informeren",
+              a["advies"] == "wel_melden" and a["betrokkenen_informeren"], a)
+        a = leak.assess({"NL_BSN": 25}, eigen=True)
+        check("advies: eigen gegevens -> niet melden", a["advies"] == "niet_melden", a)
+        a = leak.assess({"PERSON": 2}, {"leak_check": {"verwerkersovereenkomst_anthropic": False}})
+        check("advies: zonder verwerkersovereenkomst een niveau hoger", a["advies"] == "beoordelen", a)
+
+        n0 = len(received)
+        code = {**read_payload, "session_id": "sess-9", "tool_input": {"file_path": str(proj / "main.go")}}
+        out, _ = hook(code)
+        check("codebestand wordt nu ook gecontroleerd", "datalek" in out.get("systemMessage", "")
+              and len(received) == n0 + 1, out)
+        check("melding aan gebruiker noemt advies", "Advies:" in out.get("systemMessage", ""), out)
+
+        r = subprocess.run([py, str(ROOT / "scripts" / "pii.py"), "report-leak", "--types", "PERSON=1,LOCATION=1",
+                            "--waar", "PERSON=kolom 'Naam'", "--source", "Read", "--ext", "txt",
+                            "--file-name", "testdata.txt", "--eigen-gegevens"], capture_output=True, env=env, cwd=proj)
+        res = json.loads(r.stdout.decode() or "{}")
+        body = received[-1]["body"] if len(received) == n0 + 2 else {}
+        check("handmatig met eigen gegevens: advies niet melden + waar",
+              res.get("advies", "").startswith("niet melden") and "kolom 'Naam'" in body.get("toelichting", ""),
+              (res, r.stderr))
+        r = subprocess.run([py, str(ROOT / "scripts" / "pii.py"), "report-leak", "--types", "PERSON=1",
+                            "--advies", "beoordelen"], capture_output=True, env=env, cwd=proj)
+        check("--advies zonder --motivering geweigerd", r.returncode != 0, r.stderr)
+        r = subprocess.run([py, str(ROOT / "scripts" / "pii.py"), "report-leak", "--types", "PERSON=1",
+                            "--advies", "beoordelen", "--motivering", "twijfel over de bron"],
+                           capture_output=True, env=env, cwd=proj)
+        res = json.loads(r.stdout.decode() or "{}")
+        check("eigen advies + motivering in melding", res.get("advies", "").startswith("twijfelgeval")
+              and "twijfel over de bron" in received[-1]["body"]["toelichting"], (res, r.stderr))
+        def bridge_rejects(text):  # mirrors BRIDGE domain.ValidateVrijeTekst (digitRuns + 11-proef)
+            for run in re.findall(r"\d(?:[ .\-]?\d)*", text):
+                d = re.sub(r"\D", "", run)
+                d = "0" + d if len(d) == 8 else d
+                if len(d) == 9 and leak._bsn_ok(d):
+                    return True
+            return False
+
+        check("geen BSN-achtige cijferreeksen in een melding (BRIDGE-regel)",
+              not any(bridge_rejects(x["body"][k]) for x in received
+                      for k in ("referentie", "samenvatting", "ontdekt_door", "gevolgen", "getroffen_maatregelen",
+                                "toelichting")), [x["body"]["toelichting"] for x in received])
 
     srv.shutdown()
     print("fouten:", fails)
